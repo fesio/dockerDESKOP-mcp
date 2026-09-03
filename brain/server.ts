@@ -14,6 +14,33 @@ const priority = z.enum(['low', 'normal', 'high', 'critical']);
 const risk = z.enum(['low', 'medium', 'high']);
 const memoryKind = z.enum(['decision', 'lesson', 'project', 'reference', 'task_result', 'preference']);
 const sensitivity = z.enum(['public', 'internal', 'private', 'secret']);
+const projectKind = z.enum([
+  'api',
+  'mcp_server',
+  'ai_agent',
+  'web_app',
+  'data_pipeline',
+  'trading_strategy',
+  'automation',
+  'cli',
+  'library',
+]);
+const workflowEngine = z.enum([
+  'mcp_native',
+  'n8n',
+  'google_cloud',
+  'github_actions',
+  'docker',
+  'hybrid',
+]);
+const workflowTrigger = z.enum([
+  'manual',
+  'webhook',
+  'schedule',
+  'event',
+  'message',
+  'file_change',
+]);
 
 const executionStep = z.object({
   id: z.string(),
@@ -191,6 +218,294 @@ const orchestration = connector('brain_orchestration').version('1.0.0').compute(
   },
 });
 
+const codeEngineering = connector('code_engineering').version('1.0.0').compute('prepare', {
+  input: z.object({
+    objective: z.string().min(3).max(6000),
+    language: z.string().min(1).max(80),
+    project_kind: projectKind,
+    runtime: z.string().min(1).max(160),
+    constraints: z.array(z.string().min(1).max(500)).max(12),
+    integrations: z.array(z.string().min(1).max(160)).max(12),
+    risk,
+  }),
+  output: z.object({
+    language: z.string(),
+    recommended_stack: z.array(z.string()).max(10),
+    architecture_rules: z.array(z.string()).max(12),
+    implementation_phases: z.array(z.object({
+      id: z.string(),
+      role: z.string(),
+      goal: z.string(),
+      deliverables: z.array(z.string()).max(6),
+      depends_on: z.array(z.string()).max(4),
+    })).max(10),
+    test_gates: z.array(z.string()).max(12),
+    security_gates: z.array(z.string()).max(10),
+    definition_of_done: z.array(z.string()).max(10),
+  }),
+  run(input) {
+    const language = input.language.trim();
+    const key = language.toLowerCase();
+    const stacks: Record<string, string[]> = {
+      python: ['Python 3.12+', 'uv or Poetry', 'Ruff', 'mypy', 'pytest', 'FastAPI for HTTP APIs'],
+      typescript: ['TypeScript strict mode', 'Node.js 22+', 'ESLint', 'Prettier', 'Vitest', 'Zod at trust boundaries'],
+      javascript: ['Node.js 22+', 'ES modules', 'ESLint', 'Prettier', 'Vitest', 'JSDoc or generated declarations'],
+      go: ['Current stable Go', 'go fmt', 'go vet', 'staticcheck', 'testing', 'golangci-lint'],
+      rust: ['Current stable Rust', 'Cargo workspaces', 'rustfmt', 'Clippy', 'cargo test', 'cargo audit'],
+      'c++': ['C++20 or newer', 'CMake', 'clang-format', 'clang-tidy', 'Catch2 or GoogleTest', 'sanitizers'],
+      'c#': ['Current .NET LTS', 'nullable reference types', 'dotnet format', 'xUnit', 'Roslyn analyzers'],
+      java: ['Current Java LTS', 'Gradle or Maven', 'SpotBugs', 'Checkstyle', 'JUnit 5', 'Testcontainers'],
+      sql: ['Versioned migrations', 'SQLFluff', 'transactional tests', 'query plans', 'least-privilege roles'],
+      bash: ['Bash strict mode', 'ShellCheck', 'shfmt', 'Bats', 'explicit error handling'],
+      powershell: ['PowerShell 7+', 'PSScriptAnalyzer', 'Pester', 'ShouldProcess for changes'],
+      'pine script': ['Pine Script v6', 'non-repainting signals', 'commission and slippage', 'walk-forward validation', 'alert contracts'],
+      mql5: ['MQL5 strict mode', 'Strategy Tester', 'forward testing', 'risk limits', 'broker constraint handling'],
+    };
+    const recommendedStack = stacks[key] ?? [
+      `Current stable ${language} toolchain`,
+      'Official formatter and linter',
+      'Deterministic unit-test framework',
+      'Dependency and vulnerability scanning',
+      'Reproducible build configuration',
+    ];
+    const phases = [
+      {
+        id: 'contract',
+        role: 'solution_architect',
+        goal: `Turn the objective into typed boundaries, acceptance criteria and explicit non-goals for ${input.project_kind}.`,
+        deliverables: ['requirements.md', 'interface contracts', 'threat model'],
+        depends_on: [],
+      },
+      {
+        id: 'implementation',
+        role: 'senior_software_engineer',
+        goal: `Implement the smallest complete solution in ${language} for runtime ${input.runtime}.`,
+        deliverables: ['production source', 'configuration schema', 'actionable errors'],
+        depends_on: ['contract'],
+      },
+      {
+        id: 'verification',
+        role: 'test_engineer',
+        goal: 'Prove normal, boundary, failure and recovery paths with deterministic tests.',
+        deliverables: ['unit tests', 'integration tests', 'negative tests', 'verification report'],
+        depends_on: ['implementation'],
+      },
+      {
+        id: 'critic',
+        role: 'independent_code_reviewer',
+        goal: 'Review correctness, maintainability, security, performance and operational readiness; require concrete fixes.',
+        deliverables: ['review findings', 'resolved findings', 'residual risks'],
+        depends_on: ['verification'],
+      },
+      {
+        id: 'delivery',
+        role: 'release_engineer',
+        goal: 'Package reproducibly with documentation, observability and rollback instructions.',
+        deliverables: ['build artifact', 'runbook', 'release notes'],
+        depends_on: ['critic'],
+      },
+    ];
+    const testGates = [
+      'Formatter and linter pass with no suppressed errors.',
+      'Static type checks pass at the strictest practical level.',
+      'Unit tests cover business rules and edge cases.',
+      'Integration tests verify every external boundary with controlled fixtures.',
+      'Failure, timeout, retry and idempotency behavior is tested.',
+      'The build is reproducible from a clean environment.',
+    ];
+    if (input.project_kind === 'trading_strategy') {
+      testGates.push('Backtests include fees, slippage, out-of-sample data and explicit anti-overfitting checks.');
+      testGates.push('Live-trading actions remain disabled until paper and forward-testing gates pass.');
+    }
+    if (input.integrations.length > 0) {
+      testGates.push('Integration contracts are tested without logging credentials or sensitive payloads.');
+    }
+    const securityGates = [
+      'Validate all untrusted input at the boundary and reject unknown fields where practical.',
+      'Use least privilege and keep secrets outside source, prompts, logs and generated artifacts.',
+      'Separate read-only planning from state-changing execution and require approval for risky writes.',
+      'Pin or lock dependencies and scan them for known vulnerabilities.',
+      'Use structured, redacted logs with correlation identifiers and no sensitive values.',
+      'Document rollback, data retention and recovery behavior.',
+    ];
+    if (input.risk === 'high') securityGates.push('Require human approval before every external or irreversible action.');
+    return {
+      language,
+      recommended_stack: recommendedStack.slice(0, 10),
+      architecture_rules: [
+        'Keep domain logic independent from transports, frameworks and external providers.',
+        'Use explicit typed contracts at every process, network and persistence boundary.',
+        'Prefer small composable modules with dependency injection over hidden global state.',
+        'Make retries bounded, observable and safe through idempotency.',
+        'Treat configuration as validated data and fail fast on invalid settings.',
+        'Provide structured errors that state the cause, retryability and recovery action.',
+        `Preserve these constraints: ${input.constraints.join('; ') || 'none supplied'}.`,
+        `Integrate only through explicit adapters: ${input.integrations.join(', ') || 'no external integrations supplied'}.`,
+      ],
+      implementation_phases: phases,
+      test_gates: testGates.slice(0, 12),
+      security_gates: securityGates.slice(0, 10),
+      definition_of_done: [
+        'Acceptance criteria are mapped to passing evidence.',
+        'No placeholder, TODO, mock-only path or silent fallback remains in production flow.',
+        'The independent critic has no unresolved critical or high finding.',
+        'Setup, operation, monitoring and rollback are documented.',
+        'Generated code is complete, internally consistent and ready for a clean build.',
+      ],
+    };
+  },
+});
+
+const workflowEngineering = connector('workflow_engineering').version('1.0.0').compute('design', {
+  input: z.object({
+    objective: z.string().min(3).max(6000),
+    engine: workflowEngine,
+    trigger: workflowTrigger,
+    integrations: z.array(z.string().min(1).max(160)).max(12),
+    expected_frequency: z.string().min(1).max(160),
+    risk,
+    human_approval: z.boolean(),
+    persist_result: z.boolean(),
+  }),
+  output: z.object({
+    controller: z.literal('mcp_orchestrator'),
+    engine: z.string(),
+    n8n_role: z.literal('optional_executor'),
+    nodes: z.array(z.object({
+      id: z.string(),
+      type: z.string(),
+      purpose: z.string(),
+      depends_on: z.array(z.string()).max(4),
+      retry_policy: z.string(),
+      evidence: z.string(),
+    })).max(12),
+    controls: z.array(z.string()).max(12),
+    observability: z.array(z.string()).max(10),
+    acceptance_tests: z.array(z.string()).max(10),
+  }),
+  run(input) {
+    const nodes: Array<{
+      id: string;
+      type: string;
+      purpose: string;
+      depends_on: string[];
+      retry_policy: string;
+      evidence: string;
+    }> = [
+      {
+        id: 'trigger',
+        type: input.trigger,
+        purpose: `Start the workflow at ${input.expected_frequency} and attach a correlation id.`,
+        depends_on: [],
+        retry_policy: 'Do not retry trigger delivery blindly; deduplicate by event id.',
+        evidence: 'accepted event id and timestamp',
+      },
+      {
+        id: 'validate',
+        type: 'policy_gate',
+        purpose: 'Validate input schema, authorization, scope, freshness and duplicate status.',
+        depends_on: ['trigger'],
+        retry_policy: 'No retry for invalid input; return an actionable rejection.',
+        evidence: 'validated normalized input or explicit rejection',
+      },
+      {
+        id: 'context',
+        type: 'knowledge_read',
+        purpose: `Retrieve the minimum Obsidian and approved source context needed for: ${input.objective}`,
+        depends_on: ['validate'],
+        retry_policy: 'Two bounded retries, then continue only when missing context is non-critical.',
+        evidence: 'source references and retrieval status',
+      },
+      {
+        id: 'specialist',
+        type: 'model_worker',
+        purpose: 'Produce a typed proposal; do not perform external writes.',
+        depends_on: ['context'],
+        retry_policy: 'One repair attempt using validation findings.',
+        evidence: 'typed proposal and assumptions',
+      },
+      {
+        id: 'critic',
+        type: 'independent_review',
+        purpose: 'Check correctness, security, completeness, unsupported claims and policy compliance.',
+        depends_on: ['specialist'],
+        retry_policy: 'Return to specialist once for concrete repair; otherwise stop blocked.',
+        evidence: 'review verdict and resolved findings',
+      },
+    ];
+    let executionDependency = 'critic';
+    if (input.human_approval || input.risk !== 'low') {
+      nodes.push({
+        id: 'approval',
+        type: 'human_gate',
+        purpose: 'Approve the exact prepared action, target and side effects before execution.',
+        depends_on: ['critic'],
+        retry_policy: 'Never retry or infer approval.',
+        evidence: 'approval decision bound to the prepared action',
+      });
+      executionDependency = 'approval';
+    }
+    nodes.push({
+      id: 'execute',
+      type: input.engine === 'n8n' || input.engine === 'hybrid' ? 'n8n_executor' : `${input.engine}_executor`,
+      purpose: `Execute bounded adapters for: ${input.integrations.join(', ') || 'the selected internal operation'}. MCP retains orchestration authority.`,
+      depends_on: [executionDependency],
+      retry_policy: 'Exponential backoff with jitter, a strict attempt limit and idempotency key.',
+      evidence: 'per-operation status, identifiers and sanitized errors',
+    });
+    if (input.persist_result) {
+      nodes.push({
+        id: 'persist',
+        type: 'obsidian_memory',
+        purpose: 'Write the approved result, evidence and lessons without secrets.',
+        depends_on: ['execute'],
+        retry_policy: 'Retry only when the write is idempotent; preserve the same record key.',
+        evidence: 'memory path and content checksum',
+      });
+    }
+    nodes.push({
+      id: 'complete',
+      type: 'completion_gate',
+      purpose: 'Finish only when all required evidence exists; otherwise expose the first blocker.',
+      depends_on: [input.persist_result ? 'persist' : 'execute'],
+      retry_policy: 'No automatic retry; resume from the first failed node.',
+      evidence: 'final status, duration, changed targets and residual risks',
+    });
+    return {
+      controller: 'mcp_orchestrator' as const,
+      engine: input.engine,
+      n8n_role: 'optional_executor' as const,
+      nodes,
+      controls: [
+        'MCP owns routing, dependencies, model selection and the completion gate.',
+        'n8n may execute integrations or schedules but never decides task completion.',
+        'Every external write is isolated from read-only preparation and explicitly annotated.',
+        'Inputs and outputs use versioned schemas; incompatible versions fail closed.',
+        'Each event has an idempotency key and each retry has a strict limit.',
+        'Secrets are referenced by managed names and never copied into workflow definitions.',
+        'Concurrency, rate limits, timeouts and circuit breaking are explicit per adapter.',
+        'A dead-letter path retains sanitized failure context for controlled replay.',
+      ],
+      observability: [
+        'Structured logs: execution_id, node_id, attempt, duration_ms, status and error_code.',
+        'Metrics: starts, successes, failures, retries, dead letters and end-to-end latency.',
+        'Traces propagate the same correlation id through MCP, models, n8n and adapters.',
+        'Alerts distinguish transient failures, permanent failures and policy denials.',
+        'Audit records identify approvals and changed targets without storing secret values.',
+      ],
+      acceptance_tests: [
+        'A valid event completes once and produces all declared evidence.',
+        'A duplicate event produces no duplicate side effect.',
+        'Invalid input fails before any external operation.',
+        'A transient dependency failure follows bounded retry and recovery policy.',
+        'A permanent failure enters the dead-letter path with an actionable error.',
+        'A risky write cannot run without approval bound to the exact prepared action.',
+        'Logs, traces and stored memory contain no credentials or sensitive payloads.',
+      ],
+    };
+  },
+});
+
 const coverage = connector('programming_coverage').version('1.0.0').compute('audit', {
   input: z.object({
     known_languages: z.array(z.string().min(1).max(80)).max(200),
@@ -319,6 +634,8 @@ export default server(
     instructions: 'Act as the control plane. Plan and gate work, delegate bounded commands to logical worker roles, demand evidence, run an independent critic, and write approved results to Obsidian memory. n8n is an optional executor, never the controller.',
     use: {
       orchestration,
+      code_engineering: codeEngineering,
+      workflow_engineering: workflowEngineering,
       coverage,
       memory,
     },
@@ -397,6 +714,107 @@ export default server(
           policy: result.policy,
           steps: result.steps,
           completion_gate: result.completion_gate,
+        };
+      },
+    }),
+    tool('prepare_code_project', {
+      title: 'Przygotuj kod klasy produkcyjnej',
+      description: 'Create a language-aware implementation contract for a complete production codebase, including architecture, phases, tests, security and definition of done. Use it before writing or substantially changing code.',
+      annotations: annotations.readOnly(),
+      input: z.object({
+        objective: z.string().min(3).max(6000),
+        language: z.string().min(1).max(80),
+        project_kind: projectKind,
+        runtime: z.string().min(1).max(160),
+        constraints: z.array(z.string().min(1).max(500)).max(12).default([]),
+        integrations: z.array(z.string().min(1).max(160)).max(12).default([]),
+        risk: risk.default('low'),
+      }),
+      output: z.object({
+        language: z.string(),
+        recommended_stack: z.array(z.string()).max(10),
+        architecture_rules: z.array(z.string()).max(12),
+        implementation_phases: z.array(z.object({
+          id: z.string(),
+          role: z.string(),
+          goal: z.string(),
+          deliverables: z.array(z.string()).max(6),
+          depends_on: z.array(z.string()).max(4),
+        })).max(10),
+        test_gates: z.array(z.string()).max(12),
+        security_gates: z.array(z.string()).max(10),
+        definition_of_done: z.array(z.string()).max(10),
+      }),
+      fulfil: ({ input, connectors }) => {
+        const result = connectors.code_engineering.prepare({
+          objective: input.objective,
+          language: input.language,
+          project_kind: input.project_kind,
+          runtime: input.runtime,
+          constraints: input.constraints,
+          integrations: input.integrations,
+          risk: input.risk,
+        });
+        return {
+          language: result.language,
+          recommended_stack: result.recommended_stack,
+          architecture_rules: result.architecture_rules,
+          implementation_phases: result.implementation_phases,
+          test_gates: result.test_gates,
+          security_gates: result.security_gates,
+          definition_of_done: result.definition_of_done,
+        };
+      },
+    }),
+    tool('design_workflow', {
+      title: 'Zaprojektuj workflow i automatyzację',
+      description: 'Design a production workflow controlled by MCP, with typed nodes, dependencies, approval gates, retries, idempotency, observability and acceptance tests. n8n remains an optional executor.',
+      annotations: annotations.readOnly(),
+      input: z.object({
+        objective: z.string().min(3).max(6000),
+        engine: workflowEngine.default('hybrid'),
+        trigger: workflowTrigger,
+        integrations: z.array(z.string().min(1).max(160)).max(12).default([]),
+        expected_frequency: z.string().min(1).max(160),
+        risk: risk.default('low'),
+        human_approval: z.boolean().default(false),
+        persist_result: z.boolean().default(true),
+      }),
+      output: z.object({
+        controller: z.literal('mcp_orchestrator'),
+        engine: z.string(),
+        n8n_role: z.literal('optional_executor'),
+        nodes: z.array(z.object({
+          id: z.string(),
+          type: z.string(),
+          purpose: z.string(),
+          depends_on: z.array(z.string()).max(4),
+          retry_policy: z.string(),
+          evidence: z.string(),
+        })).max(12),
+        controls: z.array(z.string()).max(12),
+        observability: z.array(z.string()).max(10),
+        acceptance_tests: z.array(z.string()).max(10),
+      }),
+      fulfil: ({ input, connectors }) => {
+        const result = connectors.workflow_engineering.design({
+          objective: input.objective,
+          engine: input.engine,
+          trigger: input.trigger,
+          integrations: input.integrations,
+          expected_frequency: input.expected_frequency,
+          risk: input.risk,
+          human_approval: input.human_approval,
+          persist_result: input.persist_result,
+        });
+        return {
+          controller: result.controller,
+          engine: result.engine,
+          n8n_role: result.n8n_role,
+          nodes: result.nodes,
+          controls: result.controls,
+          observability: result.observability,
+          acceptance_tests: result.acceptance_tests,
         };
       },
     }),
@@ -506,6 +924,34 @@ export default server(
         '- Model providers are replaceable workers selected by logical role.',
       ].join('\n'),
     }),
+    resource('engineering_standards', {
+      uri: 'brain://engineering-standards',
+      title: 'Production engineering standards',
+      description: 'Authoritative standards for code, workflow and automation work delegated by the Brain.',
+      mimeType: 'text/markdown',
+      fulfil: () => [
+        '# Production engineering standards',
+        '',
+        '## Code',
+        '- Start from typed contracts, acceptance criteria, non-goals and a threat model.',
+        '- Keep domain logic separate from transports, frameworks and providers.',
+        '- Generate complete files with strict validation, actionable errors and no hidden global state.',
+        '- Require formatting, linting, static analysis, unit, integration, negative and recovery tests.',
+        '- Finish with an independent critic and resolve every critical or high finding.',
+        '',
+        '## Workflows and automations',
+        '- MCP owns orchestration, dependencies, model selection and completion gates.',
+        '- n8n, Google Cloud, GitHub Actions and Docker are bounded executors, not controllers.',
+        '- Separate preparation from writes; risky writes require approval bound to the exact action.',
+        '- Every trigger is deduplicated and every write is idempotent where possible.',
+        '- Use bounded retries, circuit breakers, dead-letter handling, structured logs, metrics and traces.',
+        '',
+        '## Security and memory',
+        '- Apply least privilege and keep secrets outside code, prompts, logs and knowledge stores.',
+        '- Obsidian contains approved decisions and lessons; NotebookLM receives only curated non-private sources.',
+        '- Record evidence, changed targets, residual risks and rollback instructions.',
+      ].join('\n'),
+    }),
     prompt('execute_with_brain', {
       title: 'Wykonaj zadanie przez Brain Orchestrator',
       description: 'Plan a task, execute its dependency-ordered assignments, review the result and prepare approved memory.',
@@ -519,6 +965,44 @@ export default server(
           content: {
             type: 'text',
             text: `Use orchestrate_task for this objective: ${input.objective}. Domain: ${input.domain}. Execute steps in dependency order, require evidence, run critic_review, and prepare memory only after approval.`,
+          },
+        }],
+      }),
+    }),
+    prompt('build_production_code', {
+      title: 'Zbuduj kompletny kod produkcyjny',
+      description: 'Use the Brain engineering contract to create, verify and independently review a complete code change.',
+      arguments: z.object({
+        objective: z.string().describe('The software result to build'),
+        language: z.string().describe('Primary implementation language'),
+        project_kind: projectKind.describe('Kind of software artifact'),
+        runtime: z.string().describe('Target runtime and deployment environment'),
+      }),
+      fulfil: ({ input }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Call prepare_code_project for this objective: ${input.objective}. Language: ${input.language}. Project kind: ${input.project_kind}. Runtime: ${input.runtime}. Then implement complete production files, add deterministic tests, run the available validation gates, perform an independent critic review, repair critical and high findings, and report exact evidence plus untested layers. Never include secrets or claim checks that were not run.`,
+          },
+        }],
+      }),
+    }),
+    prompt('build_production_workflow', {
+      title: 'Zbuduj kompletny workflow',
+      description: 'Design and implement a governed workflow or automation while preserving MCP as the control plane.',
+      arguments: z.object({
+        objective: z.string().describe('The workflow outcome'),
+        engine: workflowEngine.describe('Preferred execution engine'),
+        trigger: workflowTrigger.describe('Workflow trigger'),
+        expected_frequency: z.string().describe('Expected run frequency or event volume'),
+      }),
+      fulfil: ({ input }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Call design_workflow for this objective: ${input.objective}. Engine: ${input.engine}. Trigger: ${input.trigger}. Expected frequency: ${input.expected_frequency}. Implement the resulting typed nodes and contracts, keep MCP in control, treat n8n only as an optional executor, test success, duplicate, failure, retry and approval paths, and return execution evidence plus rollback instructions.`,
           },
         }],
       }),
