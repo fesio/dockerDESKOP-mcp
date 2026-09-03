@@ -1,4 +1,10 @@
 # Docker Hub MCP Server
+
+> This fork also contains **Fesiomatyzacja Brain Orchestrator**, a separate
+> Noodle Seed MCP entrypoint in [`brain/server.ts`](brain/server.ts). The Brain
+> controls task routing across model roles, Obsidian, NotebookLM, Docker and an
+> optional n8n executor. See [`brain/README.md`](brain/README.md).
+
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/docker/hub-mcp)](https://archestra.ai/mcp-catalog/docker__hub-mcp)
 
 The Docker Hub MCP Server is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server that interfaces with Docker Hub APIs to make them accessible to LLMs, enabling intelligent content discovery and repository management.
