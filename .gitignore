@@ -2,6 +2,16 @@ node_modules/
 dist/
 .vscode/
 .env
+.env.*
+!.env.example
 logs/
 gordon-mcp.yml
 /.idea/
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.lance/
+brain/obsidian-vault/.obsidian/
+brain/obsidian-vault/Private/
+brain/obsidian-vault/Secrets/
