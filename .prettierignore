@@ -1,5 +1,7 @@
 dist
 node_modules
+.agents
+.claude
 src/scout/genql
 .gitignore
 .prettierrc.json
