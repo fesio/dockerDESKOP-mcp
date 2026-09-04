@@ -1,7 +1,4 @@
 {
-  "entrypoint": "brain/server.ts",
-  "agents": [
-    "codex",
-    "claude-code"
-  ]
+    "entrypoint": "brain/server.ts",
+    "agents": ["codex", "claude-code"]
 }
