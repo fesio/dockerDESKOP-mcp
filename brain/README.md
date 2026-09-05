@@ -64,6 +64,8 @@ for every state-changing adapter call.
 
 Run the public Noodle commands from the repository root:
 
+Noodle Seed validation requires Node.js 24 or newer.
+
 ```bash
 noodle validate --json
 export VERCEL_TOKEN="set-outside-the-repository"
