@@ -65,4 +65,4 @@ jobs:
           node-version: 22
 
       - name: Validate the MCP entrypoint
-        run: npm exec --yes --package=@noodleseed/one -- noodle validate --json
+        run: npm exec --yes @noodleseed/one@0.161.2 -- validate --json
