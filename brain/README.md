@@ -21,15 +21,16 @@ for every state-changing adapter call.
 
 ## Knowledge layers
 
-| Layer           | Responsibility                                           |
-| --------------- | -------------------------------------------------------- |
-| Obsidian        | Editable source of truth and long-term project memory    |
-| LanceDB bridge  | Semantic retrieval over approved Obsidian notes          |
-| Google Drive    | Durable synchronization of approved non-secret documents |
-| Model host      | Executes the task route selected by MCP at runtime       |
-| MCP Brain       | Planning, routing, policy and completion gates           |
-| Vercel Workflow | Durable checkpoints, bounded retries and resume          |
-| n8n             | Optional integration and scheduling executor             |
+| Layer           | Responsibility                                            |
+| --------------- | --------------------------------------------------------- |
+| Obsidian        | Editable source of truth and long-term project memory     |
+| LanceDB bridge  | Semantic retrieval over approved Obsidian notes           |
+| Google Drive    | Durable synchronization of approved non-secret documents  |
+| Model host      | Executes the task route selected by MCP at runtime        |
+| MCP Brain       | Planning, routing, policy and completion gates            |
+| Vercel Workflow | Durable checkpoints, bounded retries and resume           |
+| Vercel API      | Read-only deployment, build and configuration diagnostics |
+| n8n             | Optional integration and scheduling executor              |
 
 ## Default routing policy
 
@@ -48,6 +49,9 @@ for every state-changing adapter call.
 
 - `get_brain_context` — returns the authoritative architecture and boundaries.
 - `orchestrate_task` — creates an ordered, dependency-aware execution plan.
+- `get_deployment_history` — returns bounded Vercel deployment history.
+- `get_deployment_logs` — returns redacted build diagnostics and a next step.
+- `get_project_env_list` — lists variable names/scopes without their values.
 - `prepare_code_project` — creates a production implementation contract.
 - `design_workflow` — creates an orchestration and reliability contract.
 - `list_programming_catalog` — returns the operational priority catalog.
@@ -60,12 +64,22 @@ for every state-changing adapter call.
 
 Run the public Noodle commands from the repository root:
 
+Noodle Seed validation requires Node.js 24 or newer.
+
 ```bash
 noodle validate --json
+export VERCEL_TOKEN="set-outside-the-repository"
+noodle secrets set VERCEL_TOKEN --runtime local --from-env VERCEL_TOKEN
 noodle test --json
 ```
 
-The MCP surface and routing policy run locally and are covered by the commands
-above. Live execution still requires real endpoints and authentication for the
-Vercel Workflow adapter, Obsidian bridge, Drive, selected model host and n8n
-executor. Keep all credentials outside the source tree.
+`VERCEL_TOKEN` is a managed secret and never belongs in `server.ts`, tracked
+configuration, prompts or logs. The three Vercel tools use the current REST
+endpoints and are read-only. Build events are bounded and redacted; environment
+variables are requested with `decrypt=false` and only names/scopes survive the
+normalizer.
+
+For an independently deployable Streamable HTTP endpoint on Vercel plus local
+`stdio`, use [`../vercel-inspector-mcp`](../vercel-inspector-mcp). Live execution
+still requires real authentication for Vercel, the Obsidian bridge, Drive, the
+selected model host and the optional n8n executor.

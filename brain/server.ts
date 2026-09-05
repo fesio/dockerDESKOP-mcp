@@ -1,4 +1,4 @@
-import { annotations, connector, prompt, resource, server, tool, z } from '@noodleseed/one';
+import { annotations, connector, prompt, resource, secret, server, tool, z } from '@noodleseed/one';
 
 const domain = z.enum([
     'programming',
@@ -50,6 +50,41 @@ const workflowTrigger = z.enum([
     'message',
     'file_change',
 ]);
+
+const vercelScope = z.object({
+    scope_label: z.string(),
+    team_id: z.string().optional(),
+    team_slug: z.string().optional(),
+    warning: z.string(),
+});
+
+const vercelDeploymentSummary = z.object({
+    id: z.string(),
+    name: z.string(),
+    url: z.string(),
+    state: z.string(),
+    target: z.string(),
+    created_at: z.string(),
+    creator: z.string(),
+    branch: z.string(),
+    commit_sha: z.string(),
+    commit_message: z.string(),
+    error_code: z.string(),
+});
+
+const vercelLogEntry = z.object({
+    timestamp: z.string(),
+    level: z.string(),
+    message: z.string(),
+});
+
+const vercelEnvironmentVariable = z.object({
+    key: z.string(),
+    targets: z.array(z.string()).max(10),
+    type: z.string(),
+    git_branch: z.string(),
+    custom_environment_ids: z.array(z.string()).max(10),
+});
 
 const executionStep = z.object({
     id: z.string(),
@@ -938,6 +973,501 @@ const memory = connector('memory_preparation')
             };
         },
     });
+
+const vercelApi = connector('vercel_api')
+    .version('1.0.0')
+    .http({
+        baseUrl: 'https://api.vercel.com',
+        allowedOrigins: ['https://api.vercel.com'],
+        auth: { kind: 'bearer', secret: secret('VERCEL_TOKEN') },
+        operations: {
+            teams: {
+                type: 'read',
+                method: 'GET',
+                path: '/v2/teams',
+                query: ['limit'],
+                input: z.object({ limit: z.number().int().min(1).max(100) }),
+                output: z.object({ teams: z.array(z.unknown()).max(100).optional() }),
+                response: { teams: '${response.teams}' },
+            },
+            deployments: {
+                type: 'read',
+                method: 'GET',
+                path: '/v7/deployments',
+                query: ['projectId', 'limit', 'teamId', 'slug', 'target'],
+                input: z.object({
+                    projectId: z.string(),
+                    limit: z.number().int().min(1).max(20),
+                    teamId: z.string().optional(),
+                    slug: z.string().optional(),
+                    target: z.enum(['production', 'preview']).optional(),
+                }),
+                output: z.object({ deployments: z.array(z.unknown()).max(20).optional() }),
+                response: { deployments: '${response.deployments}' },
+            },
+            deployment: {
+                type: 'read',
+                method: 'GET',
+                path: '/v13/deployments/{deploymentId}',
+                query: ['teamId', 'slug'],
+                input: z.object({
+                    deploymentId: z.string(),
+                    teamId: z.string().optional(),
+                    slug: z.string().optional(),
+                }),
+                output: z.object({ deployment: z.unknown() }),
+                response: { deployment: '${response}' },
+            },
+            events: {
+                type: 'read',
+                method: 'GET',
+                path: '/v3/deployments/{deploymentId}/events',
+                query: ['teamId', 'slug', 'direction', 'follow', 'limit', 'builds', 'name'],
+                input: z.object({
+                    deploymentId: z.string(),
+                    teamId: z.string().optional(),
+                    slug: z.string().optional(),
+                    direction: z.enum(['backward', 'forward']),
+                    follow: z.number().int().min(0).max(0),
+                    limit: z.number().int().min(1).max(200),
+                    builds: z.number().int().min(1).max(1),
+                    name: z.string().optional(),
+                }),
+                output: z.object({ events: z.array(z.unknown()).max(200).optional() }),
+                response: { events: '${response}' },
+            },
+            environment: {
+                type: 'read',
+                method: 'GET',
+                path: '/v10/projects/{projectId}/env',
+                query: ['teamId', 'slug', 'gitBranch', 'decrypt', 'source'],
+                input: z.object({
+                    projectId: z.string(),
+                    teamId: z.string().optional(),
+                    slug: z.string().optional(),
+                    gitBranch: z.string().optional(),
+                    decrypt: z.literal('false'),
+                    source: z.literal('fesiomatyzacja_mcp'),
+                }),
+                output: z.object({ envs: z.array(z.unknown()).max(500).optional() }),
+                response: { envs: '${response.envs}' },
+            },
+        },
+    });
+
+const vercelScopeResolver = connector('vercel_scope_resolver')
+    .version('1.0.0')
+    .compute('resolve', {
+        type: 'read',
+        input: z.object({
+            requested_scope: z.string().optional(),
+            teams: z.unknown().optional(),
+        }),
+        output: vercelScope,
+        run(input) {
+            const rawTeams = Array.isArray(input.teams) ? input.teams : [];
+            const teams = rawTeams
+                .map((entry) => {
+                    const record = entry as Record<string, unknown>;
+                    return {
+                        id: typeof record.id === 'string' ? record.id : '',
+                        slug: typeof record.slug === 'string' ? record.slug : '',
+                        name: typeof record.name === 'string' ? record.name : '',
+                    };
+                })
+                .filter((entry) => entry.id.length > 0 || entry.slug.length > 0);
+            const requested = input.requested_scope?.trim() ?? '';
+
+            if (requested.length > 0) {
+                const match = teams.find(
+                    (entry) =>
+                        entry.id === requested ||
+                        entry.slug.toLowerCase() === requested.toLowerCase() ||
+                        entry.name.toLowerCase() === requested.toLowerCase()
+                );
+                if (match) {
+                    return {
+                        scope_label: `team:${match.slug || match.name || match.id}`,
+                        team_id: match.id || undefined,
+                        team_slug: match.id ? undefined : match.slug || undefined,
+                        warning: '',
+                    };
+                }
+                if (requested.startsWith('team_')) {
+                    return {
+                        scope_label: `team:${requested}`,
+                        team_id: requested,
+                        warning:
+                            'The requested team id was not present in the team listing; Vercel will enforce authorization on the scoped request.',
+                    };
+                }
+                return {
+                    scope_label: `team:${requested}`,
+                    team_slug: requested,
+                    warning:
+                        'The requested team slug was not present in the team listing; Vercel will enforce authorization on the scoped request.',
+                };
+            }
+
+            if (teams.length === 1) {
+                const only = teams[0];
+                return {
+                    scope_label: `team:${only.slug || only.name || only.id}`,
+                    team_id: only.id || undefined,
+                    team_slug: only.id ? undefined : only.slug || undefined,
+                    warning: '',
+                };
+            }
+
+            if (teams.length > 1) {
+                return {
+                    scope_label: 'personal',
+                    warning:
+                        'Multiple teams are available. The personal scope was used; pass team_id_or_slug to select a team explicitly.',
+                };
+            }
+
+            return {
+                scope_label: 'personal',
+                warning: '',
+            };
+        },
+    });
+
+const vercelHistoryNormalizer = connector('vercel_history_normalizer')
+    .version('1.0.0')
+    .compute('normalize', {
+        type: 'read',
+        input: z.object({
+            deployments: z.unknown().optional(),
+            limit: z.number().int().min(1).max(20),
+            scope_label: z.string(),
+            warning: z.string(),
+        }),
+        output: z.object({
+            scope: z.string(),
+            deployment_count: z.number().int(),
+            deployments: z.array(vercelDeploymentSummary).max(20),
+            warning: z.string(),
+        }),
+        run(input) {
+            const toIso = (value: unknown): string => {
+                if (typeof value !== 'number' && typeof value !== 'string') return '';
+                const numeric =
+                    typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+                const date = new Date(numeric);
+                return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+            };
+            const list = Array.isArray(input.deployments) ? input.deployments : [];
+            const deployments = list.slice(0, input.limit).map((entry) => {
+                const record = entry as Record<string, unknown>;
+                const meta =
+                    record.meta && typeof record.meta === 'object'
+                        ? (record.meta as Record<string, unknown>)
+                        : {};
+                const creator =
+                    record.creator && typeof record.creator === 'object'
+                        ? (record.creator as Record<string, unknown>)
+                        : {};
+                const rawUrl = typeof record.url === 'string' ? record.url : '';
+                const creatorLabel =
+                    [creator.username, creator.githubLogin, creator.email].find(
+                        (value) => typeof value === 'string' && value.length > 0
+                    ) ?? '';
+                return {
+                    id: String(record.uid ?? record.id ?? ''),
+                    name: String(record.name ?? ''),
+                    url:
+                        rawUrl.length > 0 && !rawUrl.startsWith('http')
+                            ? `https://${rawUrl}`
+                            : rawUrl,
+                    state: String(record.readyState ?? record.state ?? record.status ?? 'UNKNOWN'),
+                    target: String(record.target ?? 'preview'),
+                    created_at: toIso(record.createdAt ?? record.created),
+                    creator: String(creatorLabel),
+                    branch: String(
+                        meta.githubCommitRef ??
+                            meta.gitlabCommitRef ??
+                            meta.bitbucketCommitRef ??
+                            ''
+                    ),
+                    commit_sha: String(
+                        meta.githubCommitSha ??
+                            meta.gitlabCommitSha ??
+                            meta.bitbucketCommitSha ??
+                            ''
+                    ),
+                    commit_message: String(
+                        meta.githubCommitMessage ??
+                            meta.gitlabCommitMessage ??
+                            meta.bitbucketCommitMessage ??
+                            ''
+                    ).slice(0, 500),
+                    error_code: String(record.errorCode ?? ''),
+                };
+            });
+            return {
+                scope: input.scope_label,
+                deployment_count: deployments.length,
+                deployments,
+                warning: input.warning,
+            };
+        },
+    });
+
+const vercelDiagnosticsNormalizer = connector('vercel_diagnostics_normalizer')
+    .version('1.0.0')
+    .compute('normalize', {
+        type: 'read',
+        input: z.object({
+            deployment: z.unknown(),
+            events: z.unknown().optional(),
+            errors_only: z.boolean(),
+            limit: z.number().int().min(1).max(200),
+        }),
+        output: z.object({
+            deployment: vercelDeploymentSummary,
+            building_at: z.string(),
+            ready_at: z.string(),
+            build_duration_ms: z.number().int().nonnegative().optional(),
+            error_message: z.string(),
+            logs: z.array(vercelLogEntry).max(200),
+            log_count: z.number().int(),
+            logs_truncated: z.boolean(),
+            diagnosis: z.string(),
+            next_action: z.string(),
+            security_note: z.string(),
+        }),
+        run(input) {
+            const redact = (value: unknown): string => {
+                let text = typeof value === 'string' ? value : '';
+                text = text.replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]');
+                text = text.replace(
+                    /\b(authorization|api[_-]?key|token|secret|password|passwd|cookie)\s*[:=]\s*["']?[^\s"',;]+/gi,
+                    '$1=[REDACTED]'
+                );
+                text = text.replace(
+                    /\b(?:sk|vck|ghp|github_pat|vercel)_[A-Za-z0-9_-]{12,}\b/gi,
+                    '[REDACTED_TOKEN]'
+                );
+                text = text.replace(
+                    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+                    '[REDACTED_JWT]'
+                );
+                const withoutControlCharacters = text.replace(
+                    // eslint-disable-next-line no-control-regex
+                    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,
+                    ''
+                );
+                return withoutControlCharacters.slice(0, 2000);
+            };
+            const toIso = (value: unknown): string => {
+                if (typeof value !== 'number' && typeof value !== 'string') return '';
+                const numeric =
+                    typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+                const date = new Date(numeric);
+                return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+            };
+            const record =
+                input.deployment && typeof input.deployment === 'object'
+                    ? (input.deployment as Record<string, unknown>)
+                    : {};
+            const meta =
+                record.meta && typeof record.meta === 'object'
+                    ? (record.meta as Record<string, unknown>)
+                    : {};
+            const creator =
+                record.creator && typeof record.creator === 'object'
+                    ? (record.creator as Record<string, unknown>)
+                    : {};
+            const rawUrl = typeof record.url === 'string' ? record.url : '';
+            const state = String(record.readyState ?? record.state ?? record.status ?? 'UNKNOWN');
+            const buildingAt = Number(record.buildingAt ?? 0);
+            const readyAt = Number(record.ready ?? record.readyAt ?? 0);
+            const duration =
+                Number.isFinite(buildingAt) &&
+                Number.isFinite(readyAt) &&
+                buildingAt > 0 &&
+                readyAt >= buildingAt
+                    ? Math.round(readyAt - buildingAt)
+                    : undefined;
+            const creatorLabel =
+                [creator.username, creator.githubLogin, creator.email].find(
+                    (value) => typeof value === 'string' && value.length > 0
+                ) ?? '';
+            const rawEvents = Array.isArray(input.events) ? input.events : [];
+            const normalized = rawEvents.map((entry) => {
+                const event = entry as Record<string, unknown>;
+                const payload =
+                    event.payload && typeof event.payload === 'object'
+                        ? (event.payload as Record<string, unknown>)
+                        : {};
+                const info =
+                    payload.info && typeof payload.info === 'object'
+                        ? (payload.info as Record<string, unknown>)
+                        : {};
+                const level = String(
+                    event.type ?? payload.type ?? info.type ?? 'info'
+                ).toLowerCase();
+                const message = redact(
+                    event.text ?? payload.text ?? info.message ?? info.name ?? ''
+                );
+                const statusCode = Number(event.statusCode ?? payload.statusCode ?? 0);
+                const isError =
+                    /error|stderr|fatal|exit|failed|failure/.test(level) ||
+                    statusCode >= 400 ||
+                    /\b(error|failed|failure|fatal|exception|exited with code [1-9])\b/i.test(
+                        message
+                    );
+                return {
+                    timestamp: toIso(event.created ?? payload.created ?? payload.date),
+                    level,
+                    message,
+                    isError,
+                };
+            });
+            const filtered = input.errors_only
+                ? normalized.filter((entry) => entry.isError)
+                : normalized;
+            const logs = filtered
+                .filter((entry) => entry.message.length > 0)
+                .slice(0, input.limit)
+                .map((entry) => ({
+                    timestamp: entry.timestamp,
+                    level: entry.level,
+                    message: entry.message,
+                }));
+            const errorMessage = redact(record.errorMessage ?? '');
+            const firstError = logs[0]?.message ?? errorMessage;
+            const diagnosis =
+                state === 'ERROR' || logs.length > 0 || errorMessage.length > 0
+                    ? `Deployment ${String(record.uid ?? record.id ?? '')} requires attention. ${
+                          firstError.length > 0
+                              ? `First observed error: ${firstError}`
+                              : 'No textual error was returned.'
+                      }`
+                    : state === 'READY'
+                      ? 'Deployment is READY and no matching build error was returned.'
+                      : `Deployment state is ${state}; no matching build error was returned.`;
+            const nextAction =
+                state === 'ERROR' || logs.length > 0 || errorMessage.length > 0
+                    ? 'Fix the first reproducible build error, run the same build command locally, then create a new preview deployment and re-run this diagnostic.'
+                    : state === 'BUILDING' || state === 'QUEUED' || state === 'INITIALIZING'
+                      ? 'Wait for the deployment to reach a terminal state, then run this diagnostic again.'
+                      : 'No immediate repair is indicated; verify the application health endpoint and runtime error logs before promotion.';
+            return {
+                deployment: {
+                    id: String(record.uid ?? record.id ?? ''),
+                    name: String(record.name ?? ''),
+                    url:
+                        rawUrl.length > 0 && !rawUrl.startsWith('http')
+                            ? `https://${rawUrl}`
+                            : rawUrl,
+                    state,
+                    target: String(record.target ?? 'preview'),
+                    created_at: toIso(record.createdAt ?? record.created),
+                    creator: String(creatorLabel),
+                    branch: String(
+                        meta.githubCommitRef ??
+                            meta.gitlabCommitRef ??
+                            meta.bitbucketCommitRef ??
+                            ''
+                    ),
+                    commit_sha: String(
+                        meta.githubCommitSha ??
+                            meta.gitlabCommitSha ??
+                            meta.bitbucketCommitSha ??
+                            ''
+                    ),
+                    commit_message: String(
+                        meta.githubCommitMessage ??
+                            meta.gitlabCommitMessage ??
+                            meta.bitbucketCommitMessage ??
+                            ''
+                    ).slice(0, 500),
+                    error_code: String(record.errorCode ?? ''),
+                },
+                building_at: toIso(record.buildingAt),
+                ready_at: toIso(record.ready ?? record.readyAt),
+                build_duration_ms: duration,
+                error_message: errorMessage,
+                logs,
+                log_count: logs.length,
+                logs_truncated:
+                    filtered.filter((entry) => entry.message.length > 0).length > logs.length,
+                diagnosis,
+                next_action: nextAction,
+                security_note:
+                    'Only selected event text is returned. Common bearer tokens, API keys, passwords, cookies and JWTs are redacted; raw event payloads are never exposed.',
+            };
+        },
+    });
+
+const vercelEnvironmentNormalizer = connector('vercel_environment_normalizer')
+    .version('1.0.0')
+    .compute('normalize', {
+        type: 'read',
+        input: z.object({
+            envs: z.unknown().optional(),
+            required_keys: z.array(z.string()).max(100),
+            scope_label: z.string(),
+            warning: z.string(),
+        }),
+        output: z.object({
+            scope: z.string(),
+            variable_count: z.number().int(),
+            variables: z.array(vercelEnvironmentVariable).max(500),
+            missing_required_keys: z.array(z.string()).max(100),
+            warning: z.string(),
+            security_note: z.string(),
+        }),
+        run(input) {
+            const list = Array.isArray(input.envs) ? input.envs : [];
+            const variables = list
+                .map((entry) => {
+                    const record = entry as Record<string, unknown>;
+                    const rawTarget = record.target;
+                    const targets = Array.isArray(rawTarget)
+                        ? rawTarget
+                              .filter((value) => typeof value === 'string')
+                              .map(String)
+                              .slice(0, 10)
+                        : typeof rawTarget === 'string'
+                          ? [rawTarget]
+                          : [];
+                    const rawCustomIds = record.customEnvironmentIds;
+                    const customIds = Array.isArray(rawCustomIds)
+                        ? rawCustomIds
+                              .filter((value) => typeof value === 'string')
+                              .map(String)
+                              .slice(0, 10)
+                        : typeof record.customEnvironmentId === 'string'
+                          ? [record.customEnvironmentId]
+                          : [];
+                    return {
+                        key: typeof record.key === 'string' ? record.key : '',
+                        targets,
+                        type: typeof record.type === 'string' ? record.type : '',
+                        git_branch: typeof record.gitBranch === 'string' ? record.gitBranch : '',
+                        custom_environment_ids: customIds,
+                    };
+                })
+                .filter((entry) => entry.key.length > 0)
+                .slice(0, 500);
+            const present = new Set(variables.map((entry) => entry.key));
+            const missing = input.required_keys.filter((key) => !present.has(key)).slice(0, 100);
+            return {
+                scope: input.scope_label,
+                variable_count: variables.length,
+                variables,
+                missing_required_keys: missing,
+                warning: input.warning,
+                security_note:
+                    'Only variable names, scopes and non-secret metadata are returned. Value, decrypted and content fields are intentionally discarded before MCP output.',
+            };
+        },
+    });
+
 const languageCatalog = [
     { name: 'Python', category: 'general_ai', priority: 'critical' },
     { name: 'TypeScript', category: 'web_agents', priority: 'critical' },
@@ -957,15 +1487,20 @@ export default server(
     'fesiomatyzacja_brain',
     {
         title: 'Fesiomatyzacja Brain Orchestrator',
-        version: '1.2.0',
+        version: '1.3.0',
         instructions:
-            'Act as the control plane. Plan and gate work, choose the best currently configured model route for each execution without maintaining a ranking, prefer Vercel Workflow for durable execution, delegate bounded commands to logical worker roles, demand evidence, run an independent critic, and write approved results to Obsidian memory. Private and secret sources stay local. n8n is an optional integration executor, never the controller.',
+            'Act as the control plane. Plan and gate work, choose the best currently configured model route for each execution without maintaining a ranking, prefer Vercel Workflow for durable execution, inspect Vercel deployments through read-only redacted tools, delegate bounded commands to logical worker roles, demand evidence, run an independent critic, and write approved results to Obsidian memory. Private and secret sources stay local. n8n is an optional integration executor, never the controller.',
         use: {
             orchestration,
             code_engineering: codeEngineering,
             workflow_engineering: workflowEngineering,
             coverage,
             memory,
+            vercel_api: vercelApi,
+            vercel_scope: vercelScopeResolver,
+            vercel_history: vercelHistoryNormalizer,
+            vercel_diagnostics: vercelDiagnosticsNormalizer,
+            vercel_environment: vercelEnvironmentNormalizer,
         },
         context: { defaults: { locale: 'pl-PL', timeZone: 'Europe/Warsaw' } },
     },
@@ -1000,6 +1535,7 @@ export default server(
                     'model_host',
                     'obsidian_bridge',
                     'vercel_workflow',
+                    'vercel_api_readonly',
                     'n8n',
                     'docker',
                     'human',
@@ -1009,6 +1545,7 @@ export default server(
                     'MCP selects a configured model route at execution time and records the resolved model id.',
                     'No model ranking or NotebookLM Enterprise dependency is required.',
                     'Vercel Workflow provides durable execution; external I/O belongs in retryable steps.',
+                    'Vercel deployment inspection is read-only, bounded and secret-redacted.',
                     'n8n handles integrations and schedules only when selected.',
                     'Workers receive the minimum relevant context.',
                     'A critic independently reviews important results.',
@@ -1072,6 +1609,167 @@ export default server(
                     durability: result.durability,
                     steps: result.steps,
                     completion_gate: result.completion_gate,
+                };
+            },
+        }),
+        tool('get_deployment_history', {
+            title: 'Pokaż historię wdrożeń Vercel',
+            description:
+                'List recent deployments for a Vercel project with status, URL, creator and Git commit metadata. The tool automatically uses the only accessible team or accepts an explicit team id or slug.',
+            annotations: annotations.readOnly(),
+            input: z.object({
+                project_id_or_name: z.string().min(1).max(160),
+                team_id_or_slug: z.string().min(1).max(160).optional(),
+                limit: z.number().int().min(1).max(20).default(5),
+                target: z.enum(['production', 'preview']).optional(),
+            }),
+            output: z.object({
+                scope: z.string(),
+                deployment_count: z.number().int(),
+                deployments: z.array(vercelDeploymentSummary).max(20),
+                warning: z.string(),
+            }),
+            fulfil: ({ input, connectors }) => {
+                const teams = connectors.vercel_api.teams({ limit: 100 });
+                const scope = connectors.vercel_scope.resolve({
+                    requested_scope: input.team_id_or_slug,
+                    teams: teams.teams,
+                });
+                const raw = connectors.vercel_api.deployments({
+                    projectId: input.project_id_or_name,
+                    limit: input.limit,
+                    teamId: scope.team_id,
+                    slug: scope.team_slug,
+                    target: input.target,
+                });
+                const normalized = connectors.vercel_history.normalize({
+                    deployments: raw.deployments,
+                    limit: input.limit,
+                    scope_label: scope.scope_label,
+                    warning: scope.warning,
+                });
+                return {
+                    scope: normalized.scope,
+                    deployment_count: normalized.deployment_count,
+                    deployments: normalized.deployments,
+                    warning: normalized.warning,
+                };
+            },
+        }),
+        tool('get_deployment_logs', {
+            title: 'Zdiagnozuj deployment Vercel',
+            description:
+                'Inspect one Vercel deployment and return bounded build events, error details, a diagnosis and a concrete next action. Common credential patterns are redacted and raw event payloads are never returned.',
+            annotations: annotations.readOnly(),
+            input: z.object({
+                deployment_id_or_url: z.string().min(1).max(512),
+                team_id_or_slug: z.string().min(1).max(160).optional(),
+                build_id: z.string().min(1).max(160).optional(),
+                errors_only: z.boolean().default(true),
+                direction: z.enum(['backward', 'forward']).default('backward'),
+                limit: z.number().int().min(1).max(200).default(100),
+            }),
+            output: z.object({
+                deployment: vercelDeploymentSummary,
+                building_at: z.string(),
+                ready_at: z.string(),
+                build_duration_ms: z.number().int().nonnegative().optional(),
+                error_message: z.string(),
+                logs: z.array(vercelLogEntry).max(200),
+                log_count: z.number().int(),
+                logs_truncated: z.boolean(),
+                diagnosis: z.string(),
+                next_action: z.string(),
+                security_note: z.string(),
+            }),
+            fulfil: ({ input, connectors }) => {
+                const teams = connectors.vercel_api.teams({ limit: 100 });
+                const scope = connectors.vercel_scope.resolve({
+                    requested_scope: input.team_id_or_slug,
+                    teams: teams.teams,
+                });
+                const details = connectors.vercel_api.deployment({
+                    deploymentId: input.deployment_id_or_url,
+                    teamId: scope.team_id,
+                    slug: scope.team_slug,
+                });
+                const events = connectors.vercel_api.events({
+                    deploymentId: input.deployment_id_or_url,
+                    teamId: scope.team_id,
+                    slug: scope.team_slug,
+                    direction: input.direction,
+                    follow: 0,
+                    limit: input.limit,
+                    builds: 1,
+                    name: input.build_id,
+                });
+                const normalized = connectors.vercel_diagnostics.normalize({
+                    deployment: details.deployment,
+                    events: events.events,
+                    errors_only: input.errors_only,
+                    limit: input.limit,
+                });
+                return {
+                    deployment: normalized.deployment,
+                    building_at: normalized.building_at,
+                    ready_at: normalized.ready_at,
+                    build_duration_ms: normalized.build_duration_ms,
+                    error_message: normalized.error_message,
+                    logs: normalized.logs,
+                    log_count: normalized.log_count,
+                    logs_truncated: normalized.logs_truncated,
+                    diagnosis: normalized.diagnosis,
+                    next_action: normalized.next_action,
+                    security_note: normalized.security_note,
+                };
+            },
+        }),
+        tool('get_project_env_list', {
+            title: 'Sprawdź konfigurację zmiennych Vercel',
+            description:
+                'List only Vercel environment-variable names, targets and non-secret metadata, and report required names that are missing. Values are requested with decrypt=false and are discarded before MCP output.',
+            annotations: annotations.readOnly(),
+            input: z.object({
+                project_id_or_name: z.string().min(1).max(160),
+                team_id_or_slug: z.string().min(1).max(160).optional(),
+                git_branch: z.string().min(1).max(250).optional(),
+                required_keys: z.array(z.string().min(1).max(160)).max(100).default([]),
+            }),
+            output: z.object({
+                scope: z.string(),
+                variable_count: z.number().int(),
+                variables: z.array(vercelEnvironmentVariable).max(500),
+                missing_required_keys: z.array(z.string()).max(100),
+                warning: z.string(),
+                security_note: z.string(),
+            }),
+            fulfil: ({ input, connectors }) => {
+                const teams = connectors.vercel_api.teams({ limit: 100 });
+                const scope = connectors.vercel_scope.resolve({
+                    requested_scope: input.team_id_or_slug,
+                    teams: teams.teams,
+                });
+                const raw = connectors.vercel_api.environment({
+                    projectId: input.project_id_or_name,
+                    teamId: scope.team_id,
+                    slug: scope.team_slug,
+                    gitBranch: input.git_branch,
+                    decrypt: 'false',
+                    source: 'fesiomatyzacja_mcp',
+                });
+                const normalized = connectors.vercel_environment.normalize({
+                    envs: raw.envs,
+                    required_keys: input.required_keys,
+                    scope_label: scope.scope_label,
+                    warning: scope.warning,
+                });
+                return {
+                    scope: normalized.scope,
+                    variable_count: normalized.variable_count,
+                    variables: normalized.variables,
+                    missing_required_keys: normalized.missing_required_keys,
+                    warning: normalized.warning,
+                    security_note: normalized.security_note,
                 };
             },
         }),
@@ -1297,6 +1995,7 @@ export default server(
                     '- MCP resolves a configured model route at execution time according to the task, risk and required capabilities.',
                     '- No model ranking or NotebookLM Enterprise subscription is required.',
                     '- Vercel Workflow is the preferred durable execution layer for checkpointing, retries and resume.',
+                    '- Vercel REST diagnostics expose bounded deployment history, redacted build events and variable names without values.',
                     '- n8n is an optional executor for webhooks, integrations and schedules.',
                     '- Model providers are replaceable workers selected by logical role.',
                 ].join('\n'),
@@ -1321,6 +2020,7 @@ export default server(
                     '## Workflows and automations',
                     '- MCP owns orchestration, dependencies, model selection and completion gates.',
                     '- Vercel Workflow provides durable step execution; n8n, Google Cloud, GitHub Actions and Docker remain bounded executors.',
+                    '- Vercel diagnostics are read-only; never return raw event payloads or environment-variable values.',
                     '- Resolve a configured model route at runtime; record the selected model and one contract-compatible fallback.',
                     '- Require citations for fresh research regardless of the selected model.',
                     '- Separate preparation from writes; risky writes require approval bound to the exact action.',
