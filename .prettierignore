@@ -1,5 +1,9 @@
 dist
 node_modules
+**/dist
+**/node_modules
+**/.next
+**/next-env.d.ts
 .agents
 .claude
 src/scout/genql
