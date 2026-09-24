@@ -1,0 +1,38 @@
+name: evo-mcp-node-ci
+
+on:
+  push:
+    paths:
+      - "evo-mcp-node/**"
+      - ".github/workflows/evo-mcp-node-ci.yml"
+  pull_request:
+    paths:
+      - "evo-mcp-node/**"
+      - ".github/workflows/evo-mcp-node-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evo-mcp-node
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test image
+        run: docker build --target test -t evo-mcp-node:test .
+      - name: Runtime image
+        run: docker build --target runtime -t evo-mcp-node:ci .
+      - name: Smoke test container
+        shell: bash
+        run: |
+          docker run -d --rm --name evo-mcp-ci -p 127.0.0.1:8765:8000 evo-mcp-node:ci
+          trap 'docker stop evo-mcp-ci >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          docker logs evo-mcp-ci
+          exit 1
