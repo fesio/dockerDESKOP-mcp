@@ -7,3 +7,5 @@ __pycache__
 .ruff_cache
 README.md
 scripts
+workspace
+*.zip
