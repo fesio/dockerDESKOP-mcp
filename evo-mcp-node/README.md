@@ -144,3 +144,27 @@ Po jednorazowym `gcloud auth login`:
 ```
 
 Skrypt tworzy/uaktualnia Secret Manager i wdraża ten sam Dockerfile. Hostowany `/mcp` wymaga Bearer tokenu. Profil programisty w Cloud Run jest ustawiany na `read`; lokalny Docker pozostaje miejscem do edycji repo i dostępu do narzędzi hosta.
+
+
+## Bezkluczowe CI/CD do Cloud Run (GitHub OIDC / WIF)
+
+Projekt zawiera workflow `evo-mcp-cloudrun.yml`, który uwierzytelnia GitHub Actions do Google Cloud przez OIDC + Workload Identity Federation — bez długowiecznego klucza JSON.
+
+Jednorazowa konfiguracja z komputera, na którym działa `gcloud`:
+
+```powershell
+.\scripts\setup-gcp-wif.ps1 -ProjectId TWOJ_PROJECT_ID
+```
+
+Skrypt:
+- włącza potrzebne API Google Cloud;
+- tworzy/wykorzystuje konto `evo-mcp-github`;
+- konfiguruje Workload Identity Pool + GitHub OIDC ograniczony do repo `fesio/dockerDESKOP-mcp`;
+- nadaje role wymagane do source deploymentu Cloud Run i konfiguracji sekretów;
+- nadaje Cloud Build wymagane `roles/run.builder`;
+- zapisuje lokalny MCP token w Secret Manager;
+- jeśli `gh` jest zalogowane, sam ustawia `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER` i `GCP_SERVICE_ACCOUNT` jako GitHub Repository Variables.
+
+Potem hosting uruchamiasz z GitHub Actions -> **evo-mcp-cloudrun** -> **Run workflow**. Workflow po deploymencie wykonuje `/health` i zapisuje prawdziwy adres `https://...run.app/mcp` w podsumowaniu joba.
+
+W chmurze profil programisty pozostaje `read`; edycja repo, Docker socket i operacje autonomiczne są przeznaczone dla lokalnej instancji Docker Desktop.
