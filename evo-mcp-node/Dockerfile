@@ -4,7 +4,7 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \\
+    PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
 COPY pyproject.toml ./
 RUN uv sync --no-dev --no-install-project
