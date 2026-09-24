@@ -1,0 +1,78 @@
+name: evo-mcp-cloudrun
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Google Cloud region
+        required: true
+        default: europe-west1
+      service_name:
+        description: Cloud Run service name
+        required: true
+        default: evo-mcp-node
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: evo-mcp-cloudrun-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Preflight repository variables
+        shell: bash
+        run: |
+          test -n "${{ vars.GCP_PROJECT_ID }}" || { echo "Missing repository variable GCP_PROJECT_ID"; exit 1; }
+          test -n "${{ vars.GCP_WIF_PROVIDER }}" || { echo "Missing repository variable GCP_WIF_PROVIDER"; exit 1; }
+          test -n "${{ vars.GCP_SERVICE_ACCOUNT }}" || { echo "Missing repository variable GCP_SERVICE_ACCOUNT"; exit 1; }
+      - uses: actions/checkout@v7
+      - id: auth
+        name: Authenticate to Google Cloud with OIDC/WIF
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          version: '>= 416.0.0'
+      - name: Deploy source to Cloud Run
+        working-directory: evo-mcp-node
+        shell: bash
+        run: |
+          gcloud run deploy "${{ inputs.service_name }}" \
+            --source . \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ inputs.region }}" \
+            --port 8000 \
+            --allow-unauthenticated \
+            --min 0 \
+            --max 1 \
+            --cpu 1 \
+            --memory 768Mi \
+            --concurrency 20 \
+            --timeout 300 \
+            --set-env-vars="MCP_REQUIRE_AUTH=true,MCP_TRUST_PROXY=true,PROGRAMMER_PROFILE=read,LOG_LEVEL=INFO" \
+            --set-secrets="MCP_API_KEY=evo-mcp-api-key:latest" \
+            --quiet
+      - name: Verify deployed health endpoint
+        shell: bash
+        run: |
+          URL="$(gcloud run services describe "${{ inputs.service_name }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ inputs.region }}" \
+            --format='value(status.url)')"
+          test -n "$URL"
+          curl --fail --show-error --silent --retry 10 --retry-delay 3 "$URL/health"
+          echo "### Evo MCP Cloud Run" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Health: $URL/health" >> "$GITHUB_STEP_SUMMARY"
+          echo "- MCP: $URL/mcp" >> "$GITHUB_STEP_SUMMARY"
+          echo "- /mcp requires the Bearer token stored as evo-mcp-api-key in Secret Manager." >> "$GITHUB_STEP_SUMMARY"
