@@ -1,0 +1,40 @@
+services:
+  evo-mcp:
+    build:
+      context: .
+      target: runtime
+    image: evo-mcp-node:local
+    container_name: evo-mcp-node
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MCP_BIND_HOST: 0.0.0.0
+      MCP_PORT: 8000
+      MCP_TRUST_PROXY: "false"
+      MCP_ALLOWED_HOSTS: "127.0.0.1:*,localhost:*,[::1]:*"
+      MCP_ALLOWED_ORIGINS: "http://127.0.0.1:*,http://localhost:*,http://[::1]:*"
+    ports:
+      - "127.0.0.1:${LOCAL_MCP_PORT:-8765}:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
