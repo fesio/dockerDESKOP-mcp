@@ -28,7 +28,7 @@ class Settings:
     allowed_origins: tuple[str, ...]
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         require_auth = _as_bool(os.getenv("MCP_REQUIRE_AUTH"), False)
         api_key = os.getenv("MCP_API_KEY", "").strip()
         if require_auth and len(api_key) < 32:
