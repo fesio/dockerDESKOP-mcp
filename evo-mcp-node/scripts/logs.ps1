@@ -1,2 +1,2 @@
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
-docker compose logs -f --tail 100
+docker compose --profile n8n logs -f --tail 150
