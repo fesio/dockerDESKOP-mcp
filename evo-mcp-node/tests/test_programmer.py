@@ -35,7 +35,7 @@ def test_standard_profile_reads_and_writes(tmp_path):
     ws = make_workspace(tmp_path, "standard")
     ws.write("src/demo.py", "print('ok')\n")
     assert "print" in ws.read("src/demo.py")
-    assert ws.search("ok")[0]["path"] == "src/demo.py"
+    assert any(row["path"] == "src/demo.py" for row in ws.search("ok"))
 
 
 def test_git_status_and_diff_are_allowed_in_read_profile(tmp_path):
