@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 FROM ghcr.io/astral-sh/uv:0.12.18-python3.13-trixie-slim AS base
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 \
+ENV PATH="/app/.venv/bin:$PATH" \
+    UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
