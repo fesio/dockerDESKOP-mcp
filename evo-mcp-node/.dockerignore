@@ -9,3 +9,6 @@ README.md
 scripts
 workspace
 *.zip
+
+# Google GitHub auth ephemeral credentials
+gha-creds-*.json
