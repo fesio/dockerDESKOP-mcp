@@ -1,18 +1,23 @@
 [project]
 name = "evo-mcp-node"
-version = "0.1.0"
-description = "Private local-first MCP server for Docker Desktop and cloud deployment."
+version = "0.2.0"
+description = "Local-first programmer MCP with native n8n workflow automation."
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "mcp==2.2.0",
   "uvicorn[standard]==0.53.0",
+  "httpx==0.28.1",
+  "httpx2>=2.5.0,<3",
+  "opentelemetry-api>=1.30,<2",
+  "opentelemetry-sdk>=1.30,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
+  "opentelemetry-instrumentation-asgi>=0.51b0,<1",
 ]
 
 [dependency-groups]
 dev = [
   "pytest==9.1.1",
   "pytest-asyncio==1.4.0",
-  "httpx==0.28.1",
   "ruff==0.16.8",
 ]
 
@@ -21,5 +26,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 100
+line-length = 110
 target-version = "py312"
