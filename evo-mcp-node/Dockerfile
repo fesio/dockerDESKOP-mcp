@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM ghcr.io/astral-sh/uv:0.10.0-python3.13-bookworm-slim AS base
+FROM ghcr.io/astral-sh/uv:0.12.18-python3.13-trixie-slim AS base
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -14,7 +14,7 @@ RUN uv sync --all-groups --no-install-project
 COPY tests ./tests
 RUN uv run ruff check app tests && uv run pytest -q
 
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.13-slim-trixie AS runtime
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
