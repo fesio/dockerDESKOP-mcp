@@ -1,6 +1,8 @@
+from dataclasses import replace
+
 import pytest
 
-from app.config import Settings
+from app.config import DEFAULT_N8N_MCP_TOOLS, Settings
 
 
 def test_auth_requires_long_key(monkeypatch):
@@ -10,10 +12,32 @@ def test_auth_requires_long_key(monkeypatch):
         Settings.from_env()
 
 
-def test_local_defaults_are_private(monkeypatch):
-    for key in ("MCP_REQUIRE_AUTH", "MCP_API_KEY", "MCP_TRUST_PROXY", "MCP_ALLOWED_HOSTS"):
-        monkeypatch.delenv(key, raising=False)
+def test_programmer_profile_validation(monkeypatch):
+    monkeypatch.setenv("PROGRAMMER_PROFILE", "root")
+    with pytest.raises(RuntimeError, match="PROGRAMMER_PROFILE"):
+        Settings.from_env()
+
+
+def test_current_n8n_native_tools_are_allowlisted(monkeypatch):
+    monkeypatch.delenv("N8N_MCP_ALLOWED_TOOLS", raising=False)
     settings = Settings.from_env()
-    assert settings.require_auth is False
-    assert settings.trust_proxy is False
-    assert "localhost:*" in settings.allowed_hosts
+    expected = {
+        "get_workflow_details",
+        "test_workflow",
+        "get_workflow_execution",
+        "search_workflow_executions",
+        "get_workflow_versions_diff",
+        "prepare_workflow_pin_data",
+        "get_workflow_sdk_reference",
+        "validate_workflow",
+        "create_workflow_from_code",
+        "update_workflow",
+    }
+    assert expected.issubset(set(settings.n8n_mcp_allowed_tools))
+    assert "get_workflow" not in DEFAULT_N8N_MCP_TOOLS
+
+
+def test_n8n_auth_scheme_validation(monkeypatch):
+    monkeypatch.setenv("N8N_API_AUTH_SCHEME", "cookie")
+    with pytest.raises(RuntimeError, match="api-key or bearer"):
+        Settings.from_env()
