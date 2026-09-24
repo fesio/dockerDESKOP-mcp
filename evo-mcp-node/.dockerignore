@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+README.md
+scripts
+workspace
+*.zip
+
+# Google GitHub auth ephemeral credentials
+gha-creds-*.json

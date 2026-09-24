@@ -1,0 +1,87 @@
+services:
+  evo-mcp:
+    build:
+      context: .
+      target: runtime
+    image: evo-mcp-node:local
+    container_name: evo-mcp-node
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MCP_BIND_HOST: 0.0.0.0
+      MCP_PORT: 8000
+      MCP_TRUST_PROXY: "false"
+      MCP_ALLOWED_HOSTS: "127.0.0.1:*,localhost:*,[::1]:*,evo-mcp:8000"
+      MCP_ALLOWED_ORIGINS: "http://127.0.0.1:*,http://localhost:*,http://[::1]:*"
+      PROGRAMMER_WORKSPACE: /workspace
+      AUDIT_LOG_PATH: /data/audit.jsonl
+    ports:
+      - "127.0.0.1:${LOCAL_MCP_PORT:-8765}:8000"
+    volumes:
+      - "${PROGRAMMER_WORKSPACE_HOST:-./workspace}:/workspace"
+      - evo_mcp_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /home/appuser:size=64m,uid=10001,gid=10001,mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: 1.5
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  n8n:
+    profiles: ["n8n"]
+    image: docker.n8n.io/n8nio/n8n:2.40.5
+    container_name: evo-n8n
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_COMMUNITY_PACKAGES_ENABLED: "false"
+      N8N_MCP_SERVER_RATE_LIMIT: "100"
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Zurich}
+      TZ: ${GENERIC_TIMEZONE:-Europe/Zurich}
+    ports:
+      - "127.0.0.1:${LOCAL_N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - n8n_files:/files
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch(\"http://127.0.0.1:5678/healthz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  evo_mcp_data:
+  n8n_data:
+  n8n_files:

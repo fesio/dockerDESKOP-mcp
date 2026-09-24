@@ -1,0 +1,65 @@
+name: evo-mcp-node-ci
+
+on:
+  push:
+    paths:
+      - "evo-mcp-node/**"
+      - ".github/workflows/evo-mcp-node-ci.yml"
+  pull_request:
+    paths:
+      - "evo-mcp-node/**"
+      - ".github/workflows/evo-mcp-node-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evo-mcp-node
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare CI env
+        shell: bash
+        run: |
+          cp .env.example .env
+          sed -i 's/^N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=ci-only-encryption-key-not-a-secret/' .env
+          sed -i 's/^PROGRAMMER_APPROVAL_SECRET=.*/PROGRAMMER_APPROVAL_SECRET=ci-only-approval-secret/' .env
+          sed -i 's/^MCP_API_KEY=.*/MCP_API_KEY=ci-only-mcp-key-abcdefghijklmnopqrstuvwxyz/' .env
+      - name: Validate Compose
+        run: docker compose --profile n8n config >/dev/null
+      - name: Test image (Ruff + pytest)
+        run: docker build --target test -t evo-mcp-node:test .
+      - name: Runtime image
+        run: docker build --target runtime -t evo-mcp-node:ci .
+      - name: Evo MCP smoke test
+        shell: bash
+        run: |
+          docker run -d --name evo-mcp-ci -p 127.0.0.1:8765:8000 \
+            -e PROGRAMMER_WORKSPACE=/workspace -e AUDIT_LOG_PATH=/tmp/audit.jsonl evo-mcp-node:ci
+          trap 'docker rm -f evo-mcp-ci >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8765/health >/dev/null; then exit 0; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' evo-mcp-ci 2>/dev/null || echo false)" != "true" ]; then
+              docker logs evo-mcp-ci || true
+              docker inspect evo-mcp-ci || true
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs evo-mcp-ci || true
+          docker inspect evo-mcp-ci || true
+          exit 1
+      - name: n8n 2.40.5 startup smoke test
+        shell: bash
+        run: |
+          docker compose --profile n8n up -d n8n
+          trap 'docker compose --profile n8n down -v >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:5678/healthz >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker compose --profile n8n logs --tail 150 n8n
+          exit 1
