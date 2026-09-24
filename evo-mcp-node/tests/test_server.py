@@ -6,20 +6,21 @@ from app.server import app, mcp
 
 
 @pytest.mark.asyncio
-async def test_server_status_tool_reports_runtime():
+async def test_server_status_reports_integrations():
     async with Client(mcp) as client:
         result = await client.call_tool("server_status", {})
     payload = result.structured_content
     assert payload["name"] == "evo-mcp-node"
-    assert payload["version"] == "0.1.0"
+    assert payload["version"] == "0.2.0"
     assert payload["transport"] == "streamable-http"
+    assert payload["programmer_profile"] in {"read", "standard", "autonomous"}
 
 
 @pytest.mark.asyncio
-async def test_echo_tool():
+async def test_prompt_is_available():
     async with Client(mcp) as client:
-        result = await client.call_tool("echo", {"text": "docker-ok"})
-    assert result.structured_content["result"] == "docker-ok"
+        prompts = await client.list_prompts()
+    assert "n8n_workflow_builder" in {prompt.name for prompt in prompts.prompts}
 
 
 def test_health_and_ready_routes():
