@@ -4,7 +4,8 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \\
+    PYTHONPATH=/app
 COPY pyproject.toml ./
 RUN uv sync --no-dev --no-install-project
 COPY app ./app
@@ -19,6 +20,7 @@ WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
     MCP_BIND_HOST=0.0.0.0 \
     MCP_PORT=8000
 RUN groupadd --gid 10001 appgroup \
