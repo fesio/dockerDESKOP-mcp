@@ -37,7 +37,7 @@ jobs:
       - name: Evo MCP smoke test
         shell: bash
         run: |
-          docker run -d --rm --name evo-mcp-ci -p 127.0.0.1:8765:8000 \
+          docker run -d --name evo-mcp-ci -p 127.0.0.1:8765:8000 \
             -e PROGRAMMER_WORKSPACE=/workspace -e AUDIT_LOG_PATH=/tmp/audit.jsonl evo-mcp-node:ci
           trap 'docker rm -f evo-mcp-ci >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 40); do
