@@ -1,0 +1,25 @@
+[project]
+name = "evo-mcp-node"
+version = "0.1.0"
+description = "Private local-first MCP server for Docker Desktop and cloud deployment."
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "mcp==2.2.0",
+  "uvicorn[standard]==0.53.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "httpx==0.28.1",
+  "ruff==0.16.8",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
