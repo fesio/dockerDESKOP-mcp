@@ -27,9 +27,7 @@ const searchResult = z.object({
     slug: z.string().describe('The slug of the repository'),
     type: z
         .enum(['image', 'plugin', 'extension', 'dhi'])
-        .describe(
-            'The type of the repository. Can be "image", "plugin", "extension" or "dhi"'
-        ),
+        .describe('The type of the repository. Can be "image", "plugin", "extension" or "dhi"'),
     publisher: z.object({
         id: z.string().describe('The id of the publisher'),
         name: z.string().describe('The name of the publisher'),
