@@ -2,8 +2,11 @@
 
 > This fork also contains **Fesiomatyzacja Brain Orchestrator**, a separate
 > Noodle Seed MCP entrypoint in [`brain/server.ts`](brain/server.ts). The Brain
-> controls task routing across model roles, Obsidian, NotebookLM, Docker and an
-> optional n8n executor. See [`brain/README.md`](brain/README.md).
+> controls task routing across model roles, Obsidian, Vercel Workflow, Docker
+> and an optional n8n executor. Its read-only Vercel diagnostics are also
+> available as a standalone local/serverless package in
+> [`vercel-inspector-mcp`](vercel-inspector-mcp). See
+> [`brain/README.md`](brain/README.md).
 
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/docker/hub-mcp)](https://archestra.ai/mcp-catalog/docker__hub-mcp)
 

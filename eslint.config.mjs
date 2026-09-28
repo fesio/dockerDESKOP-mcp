@@ -7,6 +7,13 @@ export default tseslint.config(
   eslint.configs.recommended,
   tseslint.configs.recommended,
   {
-    ignores: ["node_modules/**", "dist/**", "src/scout/genql/**"],
+    ignores: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.next/**",
+      ".agents/**",
+      ".claude/**",
+      "src/scout/genql/**",
+    ],
   }
 );

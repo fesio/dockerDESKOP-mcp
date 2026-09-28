@@ -1,0 +1,68 @@
+name: Vercel Inspector MCP CI
+
+on:
+  pull_request:
+    paths:
+      - "vercel-inspector-mcp/**"
+      - "brain/**"
+      - "noodle.json"
+      - ".github/workflows/vercel-inspector-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "vercel-inspector-mcp/**"
+      - "brain/**"
+      - "noodle.json"
+      - ".github/workflows/vercel-inspector-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-inspector-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inspector:
+    name: Test serverless and stdio transports
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: vercel-inspector-mcp
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vercel-inspector-mcp/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type-check, test and build both transports
+        run: npm run check
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  brain-schema:
+    name: Validate Noodle Brain schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate the MCP entrypoint
+        run: npm exec --yes @noodleseed/one@0.161.2 -- validate --json
