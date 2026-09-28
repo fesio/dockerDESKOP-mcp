@@ -2,7 +2,8 @@
 param(
     [switch]$WithN8n,
     [switch]$SkipTests,
-    [switch]$RecreateEnv
+    [switch]$RecreateEnv,
+    [string]$WorkspacePath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -32,6 +33,12 @@ if ($RecreateEnv -or -not (Test-Path ".env")) {
 }
 
 New-Item -ItemType Directory -Path "workspace" -Force | Out-Null
+if (-not $WorkspacePath) { $WorkspacePath = Join-Path $Root "workspace" }
+& (Join-Path $PSScriptRoot "sync-workspace.ps1") -SourcePath $WorkspacePath
+if ($LASTEXITCODE -ne 0) { throw "Could not synchronize the programmer workspace into Docker." }
+
+& (Join-Path $PSScriptRoot "sync-brain.ps1")
+if ($LASTEXITCODE -ne 0) { throw "Could not synchronize the local Brain into Docker." }
 
 if (-not $SkipTests) {
     Write-Host "Building test target (Ruff + pytest)..."
@@ -40,7 +47,7 @@ if (-not $SkipTests) {
 }
 
 Write-Host "Starting Evo MCP..."
-docker compose up -d --build evo-mcp
+docker compose up -d --build evo-mcp-apps evo-mcp-n8n
 if ($LASTEXITCODE -ne 0) { throw "Could not start Evo MCP." }
 
 if ($WithN8n) {
@@ -59,12 +66,18 @@ for ($i = 0; $i -lt 60; $i++) {
     } catch { Start-Sleep -Seconds 2 }
 }
 if (-not $ok) {
-    docker compose logs --tail 150 evo-mcp
+    docker compose logs --tail 150 evo-mcp-apps evo-mcp-n8n
     throw "Evo MCP health check did not pass."
 }
 
+docker exec evo-mcp-apps python /app/scripts/mcp-smoke.py
+if ($LASTEXITCODE -ne 0) { throw "Authenticated MCP tool discovery did not pass." }
+docker exec evo-mcp-n8n python /app/scripts/mcp-smoke.py
+if ($LASTEXITCODE -ne 0) { throw "Authenticated n8n MCP tool discovery did not pass." }
+
 Write-Host ""
-Write-Host "Evo MCP: http://127.0.0.1:$port/mcp"
+Write-Host "Evo Apps MCP: http://127.0.0.1:$port/mcp"
+Write-Host "Evo n8n MCP:  http://127.0.0.1:8766/mcp"
 Write-Host "Health:  $health"
 if ($WithN8n) {
     Write-Host "n8n UI:   http://127.0.0.1:5678"

@@ -58,6 +58,11 @@ for every state-changing adapter call.
 
 ## Local evidence
 
+Every source-dependent specialist step now depends on `ground_sources`. Obsidian is always consulted
+first. Public/internal work may also use the official Notion integration and current cited sources.
+Personal NotebookLM is supported through an explicit local bundle and manual `input_required`
+handoff; no unofficial API, session cookie, or browser automation is used.
+
 Run the public Noodle commands from the repository root:
 
 ```bash

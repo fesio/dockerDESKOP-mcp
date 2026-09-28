@@ -7,7 +7,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.approvals import ApprovalVerifier
 from app.audit import AuditLogger
+from app.command_policy import CommandPolicy, CommandPolicyError
 from app.config import Settings
 
 
@@ -38,9 +40,8 @@ class ProgrammerWorkspace:
 
     def _approve(self, supplied: str) -> None:
         self._require("autonomous")
-        expected = self.settings.programmer_approval_secret
-        if len(expected) < 16 or supplied != expected:
-            raise ProgrammerError("destructive action requires the local PROGRAMMER_APPROVAL_SECRET")
+        if not supplied:
+            raise ProgrammerError("destructive action requires a scoped approval token")
 
     def path(self, relative: str = ".") -> Path:
         candidate = Path(relative)
@@ -106,6 +107,9 @@ class ProgrammerWorkspace:
     def delete(self, relative: str, approval: str) -> dict[str, object]:
         self._approve(approval)
         path = self.path(relative)
+        ApprovalVerifier(
+            self.settings.programmer_approval_secret, self.settings.approval_db_path
+        ).verify(approval, "workspace.delete", path.relative_to(self.root).as_posix())
         if not path.exists():
             return {"path": relative, "deleted": False}
         if path.is_dir():
@@ -125,10 +129,12 @@ class ProgrammerWorkspace:
             if not path.is_file() or any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in path.parts):
                 continue
             try:
-                if path.stat().st_size > self.settings.programmer_max_file_bytes:
+                resolved = path.resolve(strict=True)
+                resolved.relative_to(self.root)
+                if resolved.stat().st_size > self.settings.programmer_max_file_bytes:
                     continue
-                text = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
+                text = resolved.read_text(encoding="utf-8", errors="ignore")
+            except (OSError, ValueError):
                 continue
             for line_no, line in enumerate(text.splitlines(), 1):
                 if query.lower() in line.lower():
@@ -153,6 +159,13 @@ class ProgrammerWorkspace:
         self._require(required_profile)
         if not argv:
             raise ProgrammerError("argv must not be empty")
+        try:
+            CommandPolicy().validate(argv, self.root, self.settings.programmer_allow_docker)
+        except CommandPolicyError as exc:
+            raise ProgrammerError(str(exc)) from exc
+        return self._execute(argv, cwd)
+
+    def _execute(self, argv: list[str], cwd: str = ".") -> dict[str, object]:
         command = Path(argv[0]).name
         if command not in self.settings.programmer_allowed_commands:
             raise ProgrammerError(f"command {command!r} is not in PROGRAMMER_ALLOWED_COMMANDS")
@@ -224,4 +237,42 @@ class ProgrammerWorkspace:
         self._approve(approval)
         if not branch or any(ch.isspace() for ch in branch):
             raise ProgrammerError("invalid branch name")
-        return self.run(["git", "push", "origin", branch])
+        ApprovalVerifier(
+            self.settings.programmer_approval_secret, self.settings.approval_db_path
+        ).verify(approval, "git.push", branch)
+        return self._execute(["git", "push", "origin", branch])
+
+    def test(self, cwd: str = ".") -> dict[str, object]:
+        return self._run(["uv", "run", "pytest", "-q"], cwd)
+
+    def lint(self, cwd: str = ".") -> dict[str, object]:
+        return self._run(["uv", "run", "ruff", "check", "."], cwd)
+
+    def format_check(self, cwd: str = ".") -> dict[str, object]:
+        return self._run(["uv", "run", "ruff", "format", "--check", "."], cwd)
+
+    def typecheck(self, cwd: str = ".") -> dict[str, object]:
+        return self._run(["uv", "run", "pyright", "."], cwd)
+
+    def docker_build(self, tag: str = "evo-workspace:check", cwd: str = ".") -> dict[str, object]:
+        if not tag or any(ch.isspace() for ch in tag):
+            raise ProgrammerError("invalid Docker tag")
+        return self._run(["docker", "build", "--tag", tag, "."], cwd)
+
+    def compose_up(self, service: str, cwd: str = ".") -> dict[str, object]:
+        if not service or any(ch.isspace() for ch in service):
+            raise ProgrammerError("invalid Compose service")
+        return self._run(["docker", "compose", "up", "-d", "--build", service], cwd)
+
+    def docker_status(self, cwd: str = ".") -> dict[str, object]:
+        return self._run(["docker", "compose", "ps"], cwd, required_profile="read")
+
+    def docker_logs(self, service: str, lines: int = 200, cwd: str = ".") -> dict[str, object]:
+        if not service or any(ch.isspace() for ch in service):
+            raise ProgrammerError("invalid Compose service")
+        bounded = str(max(1, min(lines, 1000)))
+        return self._run(
+            ["docker", "compose", "logs", "--no-color", "--tail", bounded, service],
+            cwd,
+            required_profile="read",
+        )

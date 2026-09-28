@@ -1,10 +1,12 @@
 from dataclasses import replace
 
+import httpx
 import pytest
 
 from app.audit import AuditLogger
 from app.config import Settings
 from app.n8n_client import N8nError, N8nMcpBridge, N8nRestClient, _validate_url
+from app.n8n_workflows import N8nConflictError, WorkflowService
 from app.workflow_validation import WorkflowValidationError, validate_workflow_json
 
 
@@ -67,3 +69,43 @@ def test_workflow_json_rejects_duplicate_node_names():
     }
     with pytest.raises(WorkflowValidationError):
         validate_workflow_json({"name": "Bad", "nodes": [node, node], "connections": {}})
+
+
+@pytest.mark.asyncio
+async def test_export_removes_instance_and_credential_metadata(tmp_path):
+    workflow = {
+        "id": "wf-1",
+        "createdAt": "today",
+        "updatedAt": "today",
+        "versionId": "v1",
+        "name": "Export",
+        "nodes": [{"name": "HTTP", "type": "n8n-nodes-base.httpRequest", "position": [0, 0],
+                   "parameters": {}, "credentials": {"httpHeaderAuth": {"id": "secret", "name": "Prod"}}}],
+        "connections": {},
+        "settings": {},
+        "pinData": {"x": "private"},
+    }
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=workflow))
+    settings = make_settings(tmp_path)
+    client = N8nRestClient(settings, AuditLogger(settings.audit_log_path), transport=transport)
+    exported = await WorkflowService(client).export_workflow("wf-1", include_pin_data=False)
+    assert "id" not in exported
+    assert "createdAt" not in exported
+    assert "pinData" not in exported
+    assert exported["nodes"][0]["credentials"] == {
+        "httpHeaderAuth": {"name": "${N8N_CREDENTIAL_HTTPHEADERAUTH}"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_import_requires_matching_version_for_update(tmp_path):
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"id": "wf-1", "versionId": "newer"})
+    )
+    settings = make_settings(tmp_path)
+    service = WorkflowService(
+        N8nRestClient(settings, AuditLogger(settings.audit_log_path), transport=transport)
+    )
+    workflow = {"name": "Demo", "nodes": [], "connections": {}, "settings": {}}
+    with pytest.raises(N8nConflictError, match="version"):
+        await service.import_workflow(workflow, workflow_id="wf-1", expected_version_id="older")

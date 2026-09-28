@@ -16,6 +16,17 @@ def test_programmer_profile_validation(monkeypatch):
         Settings.from_env()
 
 
+def test_tool_profile_validation(monkeypatch):
+    monkeypatch.setenv("MCP_TOOL_PROFILE", "unknown")
+    with pytest.raises(RuntimeError, match="MCP_TOOL_PROFILE"):
+        Settings.from_env()
+
+
+def test_tool_profile_defaults_to_all(monkeypatch):
+    monkeypatch.delenv("MCP_TOOL_PROFILE", raising=False)
+    assert Settings.from_env().tool_profile == "all"
+
+
 def test_current_n8n_native_tools_are_allowlisted(monkeypatch):
     monkeypatch.delenv("N8N_MCP_ALLOWED_TOOLS", raising=False)
     settings = Settings.from_env()

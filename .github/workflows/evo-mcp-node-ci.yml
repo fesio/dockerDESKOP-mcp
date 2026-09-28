@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "evo-mcp-node/**"
+      - "compose.yaml"
       - ".github/workflows/evo-mcp-node-ci.yml"
   pull_request:
     paths:
       - "evo-mcp-node/**"
+      - "compose.yaml"
       - ".github/workflows/evo-mcp-node-ci.yml"
 
 permissions:
@@ -29,29 +31,40 @@ jobs:
           sed -i 's/^PROGRAMMER_APPROVAL_SECRET=.*/PROGRAMMER_APPROVAL_SECRET=ci-only-approval-secret/' .env
           sed -i 's/^MCP_API_KEY=.*/MCP_API_KEY=ci-only-mcp-key-abcdefghijklmnopqrstuvwxyz/' .env
       - name: Validate Compose
-        run: docker compose --profile n8n config >/dev/null
+        run: |
+          docker compose --profile n8n config >/dev/null
+          ! grep -q '/var/run/docker.sock' compose.yaml
+          grep -q 'attribute.environment=assertion.environment' scripts/setup-gcp-wif.ps1
+          grep -q "assertion.environment=='production'" scripts/setup-gcp-wif.ps1
+          grep -q -- '--service-account' ../.github/workflows/evo-mcp-cloudrun.yml
       - name: Test image (Ruff + pytest)
         run: docker build --target test -t evo-mcp-node:test .
       - name: Runtime image
         run: docker build --target runtime -t evo-mcp-node:ci .
-      - name: Evo MCP smoke test
+      - name: Evo MCP profile smoke tests
         shell: bash
         run: |
-          docker run -d --name evo-mcp-ci -p 127.0.0.1:8765:8000 \
-            -e PROGRAMMER_WORKSPACE=/workspace -e AUDIT_LOG_PATH=/tmp/audit.jsonl evo-mcp-node:ci
-          trap 'docker rm -f evo-mcp-ci >/dev/null 2>&1 || true' EXIT
-          for i in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:8765/health >/dev/null; then exit 0; fi
-            if [ "$(docker inspect -f '{{.State.Running}}' evo-mcp-ci 2>/dev/null || echo false)" != "true" ]; then
-              docker logs evo-mcp-ci || true
-              docker inspect evo-mcp-ci || true
-              exit 1
-            fi
-            sleep 1
+          trap 'docker rm -f evo-mcp-ci-apps evo-mcp-ci-n8n >/dev/null 2>&1 || true' EXIT
+          for profile in apps n8n; do
+            if [ "$profile" = apps ]; then port=8765; else port=8766; fi
+            docker run -d --name "evo-mcp-ci-$profile" -p "127.0.0.1:$port:8000" \
+              -e MCP_TOOL_PROFILE="$profile" \
+              -e PROGRAMMER_WORKSPACE=/workspace -e AUDIT_LOG_PATH=/tmp/audit.jsonl \
+              -e TASK_DB_PATH=/tmp/tasks.sqlite3 -e TASK_ARTIFACT_DIR=/tmp/task-artifacts \
+              -e MCP_REQUIRE_AUTH=true -e MCP_API_KEY=ci-only-mcp-key-abcdefghijklmnopqrstuvwxyz \
+              evo-mcp-node:ci
+            for i in $(seq 1 40); do
+              if curl -fsS "http://127.0.0.1:$port/health" >/dev/null; then break; fi
+              if [ "$(docker inspect -f '{{.State.Running}}' "evo-mcp-ci-$profile" 2>/dev/null || echo false)" != "true" ]; then
+                docker logs "evo-mcp-ci-$profile" || true
+                exit 1
+              fi
+              sleep 1
+            done
+            curl -fsS -H 'Authorization: Bearer ci-only-mcp-key-abcdefghijklmnopqrstuvwxyz' \
+              "http://127.0.0.1:$port/metrics" >/dev/null
+            docker exec "evo-mcp-ci-$profile" python /app/scripts/mcp-smoke.py
           done
-          docker logs evo-mcp-ci || true
-          docker inspect evo-mcp-ci || true
-          exit 1
       - name: n8n 2.40.5 startup smoke test
         shell: bash
         run: |

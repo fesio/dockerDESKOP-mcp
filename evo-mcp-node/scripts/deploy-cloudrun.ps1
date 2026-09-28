@@ -3,7 +3,8 @@ param(
     [string]$ProjectId = "",
     [string]$Region = "europe-west1",
     [string]$ServiceName = "evo-mcp-node",
-    [string]$SecretName = "evo-mcp-api-key"
+    [string]$SecretName = "evo-mcp-api-key",
+    [string]$RuntimeServiceAccountName = "evo-mcp-runtime"
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -37,8 +38,11 @@ try {
     & gcloud secrets versions add $SecretName --data-file=$tmp --project $ProjectId | Out-Null
 } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 
-$number = (& gcloud projects describe $ProjectId --format="value(projectNumber)").Trim()
-$runtimeSa = "$number-compute@developer.gserviceaccount.com"
+$runtimeSa = "$RuntimeServiceAccountName@$ProjectId.iam.gserviceaccount.com"
+& gcloud iam service-accounts describe $runtimeSa --project $ProjectId *> $null
+if ($LASTEXITCODE -ne 0) {
+    & gcloud iam service-accounts create $RuntimeServiceAccountName --project $ProjectId --display-name="Evo MCP runtime"
+}
 & gcloud secrets add-iam-policy-binding $SecretName --project $ProjectId --member="serviceAccount:$runtimeSa" --role="roles/secretmanager.secretAccessor" | Out-Null
 
 & gcloud run deploy $ServiceName `
@@ -53,6 +57,7 @@ $runtimeSa = "$number-compute@developer.gserviceaccount.com"
     --memory 768Mi `
     --concurrency 20 `
     --timeout 300 `
+    --service-account $runtimeSa `
     --set-env-vars="MCP_REQUIRE_AUTH=true,MCP_TRUST_PROXY=true,PROGRAMMER_PROFILE=read,LOG_LEVEL=INFO" `
     --set-secrets="MCP_API_KEY=$SecretName:latest"
 if ($LASTEXITCODE -ne 0) { throw "Cloud Run deployment failed." }
@@ -60,3 +65,13 @@ $url = (& gcloud run services describe $ServiceName --project $ProjectId --regio
 Write-Host "Health: $url/health"
 Write-Host "MCP:    $url/mcp"
 Write-Host "Cloud /mcp requires the Bearer token stored in local .env and Secret Manager."
+
+$env:EVO_MCP_URL = "$url/mcp"
+$env:MCP_API_KEY = $token
+try {
+    & uv run python scripts/mcp-smoke.py
+    if ($LASTEXITCODE -ne 0) { throw "Authenticated MCP discovery failed." }
+} finally {
+    Remove-Item Env:EVO_MCP_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:MCP_API_KEY -ErrorAction SilentlyContinue
+}

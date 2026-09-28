@@ -1,5 +1,5 @@
 services:
-  evo-mcp:
+  evo-mcp-apps:
     build:
       context: .
       target: host-tools

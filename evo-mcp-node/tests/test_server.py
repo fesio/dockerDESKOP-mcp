@@ -11,7 +11,7 @@ async def test_server_status_reports_integrations():
         result = await client.call_tool("server_status", {})
     payload = result.structured_content
     assert payload["name"] == "evo-mcp-node"
-    assert payload["version"] == "0.2.0"
+    assert payload["version"] == "0.3.0"
     assert payload["transport"] == "streamable-http"
     assert payload["programmer_profile"] in {"read", "standard", "autonomous"}
 
@@ -21,6 +21,13 @@ async def test_prompt_is_available():
     async with Client(mcp) as client:
         prompts = await client.list_prompts()
     assert "n8n_workflow_builder" in {prompt.name for prompt in prompts.prompts}
+
+
+@pytest.mark.asyncio
+async def test_required_evo_tools_are_discoverable():
+    async with Client(mcp) as client:
+        tools = {tool.name for tool in (await client.list_tools()).tools}
+    assert {"brain_collect_sources", "task_start", "n8n_export_workflow"} <= tools
 
 
 def test_health_and_ready_routes():

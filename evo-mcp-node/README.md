@@ -1,4 +1,6 @@
-# Evo MCP Node 0.2
+# Evo MCP Node 0.3
+
+Jeden obraz uruchamia dwa odseparowane profile narzędzi. `apps` obsługuje aplikacje programistyczne i brain, a `n8n` udostępnia wyłącznie automatyzację workflow. Profile mają wspólny kod, zabezpieczenia i CI, lecz osobne dane wykonawcze.
 
 Local-first MCP dla programisty, Docker Desktop i n8n. Ten sam obraz może później działać za reverse proxy / Cloud Run.
 
@@ -20,9 +22,20 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 Po starcie:
 
-- Evo MCP: `http://127.0.0.1:8765/mcp`
-- Health: `http://127.0.0.1:8765/health`
+- Apps MCP: `http://127.0.0.1:8765/mcp`
+- n8n MCP: `http://127.0.0.1:8766/mcp`
+- Health: `http://127.0.0.1:8765/health` oraz `http://127.0.0.1:8766/health`
 - n8n UI: `http://127.0.0.1:5678`
+
+Każdy klient może korzystać z `brain_answer_context`, aby przed odpowiedzią zebrać cytowane źródła
+z lokalnego Obsidiana oraz opcjonalnego Notion. Osobisty NotebookLM działa przez ręczną paczkę
+`input_required`, bez nieoficjalnego API i bez przejmowania sesji przeglądarki.
+
+Docker Desktop używa nazwanych wolumenów, dzięki czemu start nie wymaga ręcznego udostępniania
+folderów Windows. `setup.ps1` kopiuje brain automatycznie; po zmianach w Obsidianie uruchom
+`scripts/sync-brain.ps1`, aby odświeżyć bezpieczną kopię odczytywaną przez kontener.
+Projekt dla narzędzi programistycznych można wskazać przez `setup.ps1 -WorkspacePath C:\sciezka\projekt`;
+`scripts/sync-workspace.ps1 -SourcePath ...` odświeża później jego kopię w prywatnym wolumenie.
 
 ## Jednorazowe połączenie n8n
 
@@ -103,6 +116,8 @@ Dzięki temu model nie musi znać na pamięć aktualnych parametrów node'ów i 
 ## Observability
 
 Każde żądanie ma `X-Request-ID`, logi są JSON, a operacje zapisu/komend/n8n są audytowane do `/data/audit.jsonl`.
+Endpoint `/metrics` udostępnia liczniki Prometheus bez etykiet zawierających ścieżki, zapytania lub dane.
+W trybie uwierzytelnionym `/metrics` ma tę samą ochronę Bearer co `/mcp`.
 
 OpenTelemetry jest opcjonalne. Wystarczy ustawić standardowe zmienne, np.:
 

@@ -1,21 +1,31 @@
 from __future__ import annotations
 
 import platform
+from collections.abc import Callable
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any
+from uuid import uuid4
 
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 
 from app import __version__
 from app.audit import AuditLogger
 from app.config import Settings
+from app.knowledge.notebooklm import NotebookBundle
+from app.knowledge.notion import NotionSource
+from app.knowledge.obsidian import ObsidianSource
+from app.knowledge.service import KnowledgeService
 from app.logging_setup import configure_logging
 from app.middleware import BearerAuthMiddleware, RequestLogMiddleware
 from app.n8n_client import N8nMcpBridge, N8nRestClient
+from app.n8n_workflows import WorkflowService
+from app.observability import metrics
 from app.programmer import ProgrammerWorkspace
+from app.tasks import TaskRunner, TaskStore
 from app.telemetry import telemetry_enabled, wrap_asgi
 from app.workflow_validation import validate_workflow_json
 
@@ -25,8 +35,80 @@ audit = AuditLogger(settings.audit_log_path)
 programmer = ProgrammerWorkspace(settings=settings, audit=audit)
 n8n_rest = N8nRestClient(settings=settings, audit=audit)
 n8n_mcp = N8nMcpBridge(settings=settings, audit=audit)
+n8n_workflows = WorkflowService(n8n_rest)
+notion_source = (
+    NotionSource(
+        settings.notion_token,
+        base_url=settings.notion_base_url,
+        version=settings.notion_version,
+    )
+    if settings.notion_token
+    else None
+)
+knowledge = KnowledgeService(ObsidianSource(settings.brain_vault_path), notion_source)
+notebooklm = NotebookBundle(settings.notebooklm_bundle_path, settings.notebooklm_import_path)
+task_owner = sha256(settings.api_key.encode()).hexdigest() if settings.require_auth else "local"
+task_store = TaskStore(settings.task_db_path, settings.task_artifact_dir)
+task_store.recover_interrupted()
 
-mcp = MCPServer(
+
+def _programmer_task(method: str):
+    def run(arguments: dict[str, Any], cancelled, log):
+        if cancelled():
+            return {"cancelled": True}
+        log(f"starting {method}")
+        result = getattr(programmer, method)(**arguments)
+        log(f"finished {method} with return code {result.get('returncode')}")
+        return result
+
+    return run
+
+
+task_runner = TaskRunner(
+    task_store,
+    {
+        "programmer.test": _programmer_task("test"),
+        "programmer.lint": _programmer_task("lint"),
+        "programmer.format_check": _programmer_task("format_check"),
+        "programmer.typecheck": _programmer_task("typecheck"),
+        "docker.build": _programmer_task("docker_build"),
+        "docker.compose_up": _programmer_task("compose_up"),
+    },
+    workers=settings.task_workers,
+)
+
+
+class ProfiledMCPServer(MCPServer):
+    """MCP server that can expose an app-only or n8n-only tool surface."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._evo_tool_profiles: dict[str, str] = {}
+
+    def tool(self, *args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        register = super().tool(*args, **kwargs)
+
+        def decorator(function: Callable[..., Any]) -> Callable[..., Any]:
+            registered = register(function)
+            name = kwargs.get("name") or function.__name__
+            if name in {"server_status", "echo"}:
+                profile = "shared"
+            else:
+                profile = "n8n" if name.startswith("n8n_") else "apps"
+            self._evo_tool_profiles[name] = profile
+            return registered
+
+        return decorator
+
+    def apply_tool_profile(self, profile: str) -> None:
+        if profile == "all":
+            return
+        for name, registered_profile in tuple(self._evo_tool_profiles.items()):
+            if registered_profile not in {"shared", profile}:
+                self.remove_tool(name)
+
+
+mcp = ProfiledMCPServer(
     "evo-mcp-node",
     title="Evo MCP Node",
     description="Local-first programmer MCP with native n8n workflow automation.",
@@ -74,6 +156,7 @@ def server_status() -> dict[str, Any]:
         "name": "evo-mcp-node",
         "version": __version__,
         "transport": "streamable-http",
+        "tool_profile": settings.tool_profile,
         "python": platform.python_version(),
         "auth_required": settings.require_auth,
         "programmer_profile": settings.programmer_profile,
@@ -159,6 +242,117 @@ def programmer_git_push(branch: str, approval: str) -> dict[str, object]:
 
 
 @mcp.tool()
+def programmer_test(cwd: str = ".") -> dict[str, object]:
+    """Run the workspace test suite through a fixed command."""
+    return programmer.test(cwd)
+
+
+@mcp.tool()
+def programmer_lint(cwd: str = ".") -> dict[str, object]:
+    """Run Ruff lint through a fixed command."""
+    return programmer.lint(cwd)
+
+
+@mcp.tool()
+def programmer_typecheck(cwd: str = ".") -> dict[str, object]:
+    """Run Pyright through a fixed command."""
+    return programmer.typecheck(cwd)
+
+
+@mcp.tool()
+def programmer_docker_status(cwd: str = ".") -> dict[str, object]:
+    """Show Compose status when host Docker access is explicitly enabled."""
+    return programmer.docker_status(cwd)
+
+
+@mcp.tool()
+def programmer_docker_logs(service: str, lines: int = 200, cwd: str = ".") -> dict[str, object]:
+    """Read bounded Compose logs for one service."""
+    return programmer.docker_logs(service, lines, cwd)
+
+
+@mcp.tool()
+def task_start(
+    operation: str, arguments: dict[str, Any] | None, idempotency_key: str
+) -> dict[str, Any]:
+    """Start one registered long-running operation and return immediately."""
+    return task_runner.start(task_owner, operation, arguments or {}, idempotency_key).public()
+
+
+@mcp.tool()
+def task_status(task_id: str) -> dict[str, Any]:
+    """Get an owner-isolated durable task status."""
+    return task_store.get(task_owner, task_id).public()
+
+
+@mcp.tool()
+def task_logs(task_id: str) -> list[dict[str, Any]]:
+    """Get bounded logs for an owner-isolated task."""
+    return task_store.logs(task_owner, task_id)
+
+
+@mcp.tool()
+def task_result(task_id: str) -> Any:
+    """Get the JSON result for a completed owner-isolated task."""
+    return task_store.result(task_owner, task_id)
+
+
+@mcp.tool()
+def task_cancel(task_id: str) -> dict[str, Any]:
+    """Cooperatively request cancellation of a running task."""
+    return task_store.request_cancel(task_owner, task_id).public()
+
+
+@mcp.tool()
+def task_list(limit: int = 50) -> list[dict[str, Any]]:
+    """List recent durable tasks for the authenticated owner."""
+    return [task.public() for task in task_store.list(task_owner, limit)]
+
+
+@mcp.tool()
+async def brain_collect_sources(
+    question: str, sensitivity: str = "private", require_fresh: bool = False
+) -> dict[str, Any]:
+    """Collect cited Obsidian and optionally Notion evidence before answering."""
+    return (await knowledge.collect(
+        question, sensitivity=sensitivity, require_fresh=require_fresh
+    )).to_dict()
+
+
+@mcp.tool()
+async def brain_answer_context(
+    question: str, sensitivity: str = "private", require_fresh: bool = False
+) -> dict[str, Any]:
+    """Return the evidence gate and source excerpts; answer only when ready_to_answer is true."""
+    pack = await knowledge.collect(
+        question, sensitivity=sensitivity, require_fresh=require_fresh
+    )
+    result = pack.to_dict()
+    result["instruction"] = (
+        "Answer only from these sources and cite every material claim. "
+        "If ready_to_answer is false, ask for sources instead of guessing."
+    )
+    return result
+
+
+@mcp.tool()
+async def brain_prepare_notebook(
+    question: str, sensitivity: str = "private", require_fresh: bool = False
+) -> dict[str, str]:
+    """Prepare a local source bundle for manual use with personal NotebookLM."""
+    pack = await knowledge.collect(
+        question, sensitivity=sensitivity, require_fresh=require_fresh
+    )
+    return notebooklm.prepare(str(uuid4()), question, pack.sources, sensitivity=sensitivity)
+
+
+@mcp.tool()
+def brain_resume_notebook(filename: str) -> dict[str, Any]:
+    """Import a manually exported NotebookLM answer from the configured safe folder."""
+    return notebooklm.resume(filename).to_dict()
+
+
+@mcp.tool()
 async def n8n_list_workflows(limit: int = 50, cursor: str = "") -> Any:
     """List n8n workflows through the public REST API."""
     return await n8n_rest.list_workflows(limit, cursor)
@@ -168,6 +362,12 @@ async def n8n_list_workflows(limit: int = 50, cursor: str = "") -> Any:
 async def n8n_get_workflow(workflow_id: str) -> Any:
     """Fetch a workflow through the public REST API."""
     return await n8n_rest.get_workflow(workflow_id)
+
+
+@mcp.tool()
+def n8n_validate_workflow_json(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Validate and sanitize portable n8n workflow JSON without changing n8n state."""
+    return validate_workflow_json(workflow)
 
 
 @mcp.tool()
@@ -202,6 +402,35 @@ async def n8n_deactivate_workflow_rest(workflow_id: str) -> Any:
 async def n8n_list_executions_rest(workflow_id: str = "", limit: int = 50) -> Any:
     """List workflow executions through REST."""
     return await n8n_rest.list_executions(workflow_id, limit)
+
+
+@mcp.tool()
+async def n8n_export_workflow(workflow_id: str, include_pin_data: bool = False) -> Any:
+    """Export portable workflow JSON with instance metadata and credential IDs removed."""
+    return await n8n_workflows.export_workflow(workflow_id, include_pin_data=include_pin_data)
+
+
+@mcp.tool()
+async def n8n_import_workflow(
+    workflow: dict[str, Any], workflow_id: str = "", expected_version_id: str = ""
+) -> Any:
+    """Create or version-safely update a validated n8n workflow from JSON."""
+    _require_standard()
+    return await n8n_workflows.import_workflow(
+        workflow, workflow_id=workflow_id, expected_version_id=expected_version_id
+    )
+
+
+@mcp.tool()
+async def n8n_get_execution_status(execution_id: str) -> dict[str, Any]:
+    """Return the bounded status summary of one n8n execution."""
+    return await n8n_workflows.execution_status(execution_id)
+
+
+@mcp.tool()
+async def n8n_get_execution_logs(execution_id: str) -> Any:
+    """Return redacted and bounded n8n execution data/logs."""
+    return await n8n_workflows.execution_logs(execution_id)
 
 
 @mcp.tool()
@@ -468,8 +697,8 @@ def n8n_workflow_builder(description: str) -> str:
 @mcp.resource("evo://about")
 def about() -> str:
     return (
-        "Evo MCP Node 0.2: sandboxed programmer tools, Docker/Git gates, n8n REST fallback, "
-        "and native n8n instance-level MCP workflow builder/runner."
+        "Evo MCP Node 0.3: source-first personal brain, durable tasks, sandboxed programmer tools, "
+        "Docker/Git gates, and safe native/REST n8n workflow automation."
     )
 
 
@@ -480,6 +709,9 @@ def n8n_build_sequence() -> str:
         "4 get_node_types; 5 generate SDK code; 6 validate_workflow; 7 create/update; "
         "8 prepare_workflow_pin_data + test_workflow; 9 publish_workflow."
     )
+
+
+mcp.apply_tool_profile(settings.tool_profile)
 
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -495,8 +727,16 @@ async def ready(_: Request) -> JSONResponse:
             "workspace": settings.programmer_workspace,
             "n8nRestConfigured": bool(settings.n8n_base_url and settings.n8n_api_key),
             "n8nMcpConfigured": bool(settings.n8n_mcp_url and settings.n8n_mcp_token),
+            "notionConfigured": bool(settings.notion_token),
+            "brainVault": settings.brain_vault_path,
+            "taskStore": "ready",
         }
     )
+
+
+@mcp.custom_route("/metrics", methods=["GET"])
+async def prometheus_metrics(_: Request) -> PlainTextResponse:
+    return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4")
 
 
 if settings.trust_proxy:

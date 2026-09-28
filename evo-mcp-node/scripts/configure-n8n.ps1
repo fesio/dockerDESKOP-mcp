@@ -39,7 +39,7 @@ Set-EnvValue "N8N_MCP_URL" $McpUrl
 Set-EnvValue "N8N_API_KEY" $apiKey
 Set-EnvValue "N8N_MCP_TOKEN" $mcpToken
 
-docker compose up -d --force-recreate evo-mcp
+docker compose up -d --force-recreate evo-mcp-n8n
 if ($LASTEXITCODE -ne 0) { throw "Could not restart Evo MCP." }
 Write-Host "n8n credentials saved locally in .env (not printed, .gitignored)."
 Write-Host "Run .\scripts\verify-n8n.ps1 to check connectivity."

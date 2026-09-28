@@ -58,6 +58,7 @@ DEFAULT_N8N_MCP_TOOLS = (
 class Settings:
     bind_host: str
     port: int
+    tool_profile: str
     log_level: str
     require_auth: bool
     api_key: str
@@ -73,6 +74,17 @@ class Settings:
     programmer_approval_secret: str
     programmer_allow_docker: bool
     audit_log_path: str
+    approval_db_path: str
+    task_db_path: str
+    task_artifact_dir: str
+    task_workers: int
+
+    brain_vault_path: str
+    notion_token: str
+    notion_base_url: str
+    notion_version: str
+    notebooklm_bundle_path: str
+    notebooklm_import_path: str
 
     n8n_base_url: str
     n8n_api_key: str
@@ -95,6 +107,10 @@ class Settings:
         if profile not in {"read", "standard", "autonomous"}:
             raise RuntimeError("PROGRAMMER_PROFILE must be read, standard, or autonomous")
 
+        tool_profile = os.getenv("MCP_TOOL_PROFILE", "all").strip().lower()
+        if tool_profile not in {"all", "apps", "n8n"}:
+            raise RuntimeError("MCP_TOOL_PROFILE must be all, apps, or n8n")
+
         api_auth_scheme = os.getenv("N8N_API_AUTH_SCHEME", "api-key").strip().lower()
         if api_auth_scheme not in {"api-key", "bearer"}:
             raise RuntimeError("N8N_API_AUTH_SCHEME must be api-key or bearer")
@@ -102,6 +118,7 @@ class Settings:
         return cls(
             bind_host=os.getenv("MCP_BIND_HOST", "0.0.0.0"),
             port=_int(os.getenv("MCP_PORT"), 8000),
+            tool_profile=tool_profile,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             require_auth=require_auth,
             api_key=api_key,
@@ -125,6 +142,18 @@ class Settings:
             programmer_approval_secret=os.getenv("PROGRAMMER_APPROVAL_SECRET", ""),
             programmer_allow_docker=_as_bool(os.getenv("PROGRAMMER_ALLOW_DOCKER"), False),
             audit_log_path=os.getenv("AUDIT_LOG_PATH", "/data/audit.jsonl"),
+            approval_db_path=os.getenv("APPROVAL_DB_PATH", "/data/approvals.sqlite3"),
+            task_db_path=os.getenv("TASK_DB_PATH", "/data/tasks.sqlite3"),
+            task_artifact_dir=os.getenv("TASK_ARTIFACT_DIR", "/data/task-artifacts"),
+            task_workers=_int(os.getenv("TASK_WORKERS"), 2),
+            brain_vault_path=os.getenv("BRAIN_VAULT_PATH", "/brain/obsidian-vault"),
+            notion_token=os.getenv("NOTION_TOKEN", "").strip(),
+            notion_base_url=os.getenv("NOTION_BASE_URL", "https://api.notion.com").rstrip("/"),
+            notion_version=os.getenv("NOTION_VERSION", "2026-03-11"),
+            notebooklm_bundle_path=os.getenv("NOTEBOOKLM_BUNDLE_PATH", "/data/notebooklm"),
+            notebooklm_import_path=os.getenv(
+                "NOTEBOOKLM_IMPORT_PATH", "/brain/imports/notebooklm"
+            ),
             n8n_base_url=os.getenv("N8N_BASE_URL", "").rstrip("/"),
             n8n_api_key=os.getenv("N8N_API_KEY", "").strip(),
             n8n_api_auth_scheme=api_auth_scheme,

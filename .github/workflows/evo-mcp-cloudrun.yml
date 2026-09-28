@@ -60,10 +60,11 @@ jobs:
             --memory 768Mi \
             --concurrency 20 \
             --timeout 300 \
+            --service-account "evo-mcp-runtime@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
             --set-env-vars="MCP_REQUIRE_AUTH=true,MCP_TRUST_PROXY=true,PROGRAMMER_PROFILE=read,LOG_LEVEL=INFO" \
             --set-secrets="MCP_API_KEY=evo-mcp-api-key:latest" \
             --quiet
-      - name: Verify deployed health endpoint
+      - name: Verify deployed health and authenticated MCP endpoint
         shell: bash
         run: |
           URL="$(gcloud run services describe "${{ inputs.service_name }}" \
@@ -72,6 +73,11 @@ jobs:
             --format='value(status.url)')"
           test -n "$URL"
           curl --fail --show-error --silent --retry 10 --retry-delay 3 "$URL/health"
+          TOKEN="$(gcloud secrets versions access latest --secret=evo-mcp-api-key --project='${{ vars.GCP_PROJECT_ID }}')"
+          echo "::add-mask::$TOKEN"
+          docker build -t evo-mcp-verify ./evo-mcp-node >/dev/null
+          docker run --rm -e EVO_MCP_URL="$URL/mcp" -e MCP_API_KEY="$TOKEN" \
+            evo-mcp-verify python /app/scripts/mcp-smoke.py
           echo "### Evo MCP Cloud Run" >> "$GITHUB_STEP_SUMMARY"
           echo "- Health: $URL/health" >> "$GITHUB_STEP_SUMMARY"
           echo "- MCP: $URL/mcp" >> "$GITHUB_STEP_SUMMARY"
