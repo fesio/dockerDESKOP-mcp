@@ -1,0 +1,39 @@
+{
+    "name": "n8n calls Evo MCP server status",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "manual-trigger",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [0, 0]
+        },
+        {
+            "parameters": {
+                "endpointUrl": "http://evo-mcp:8000/mcp",
+                "serverTransport": "streamableHttp",
+                "operation": "executeTool",
+                "toolName": "server_status",
+                "toolParameters": "={}"
+            },
+            "id": "evo-mcp-client",
+            "name": "Call Evo MCP",
+            "type": "n8n-nodes-base.mcpClient",
+            "typeVersion": 1,
+            "position": [260, 0],
+            "credentials": {
+                "mcpClientApi": {
+                    "id": "${N8N_EVO_MCP_CREDENTIAL_ID}",
+                    "name": "Evo MCP local"
+                }
+            }
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [[{ "node": "Call Evo MCP", "type": "main", "index": 0 }]]
+        }
+    },
+    "settings": { "executionOrder": "v1" }
+}

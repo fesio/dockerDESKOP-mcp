@@ -14,4 +14,4 @@ if ($content -match '(?m)^DOCKER_GID=') { $content = $content -replace '(?m)^DOC
 else { $content += "`nDOCKER_GID=$DockerGid`n" }
 [IO.File]::WriteAllText((Join-Path $Root ".env"), $content, [Text.UTF8Encoding]::new($false))
 Write-Warning "Docker socket access is equivalent to broad control over Docker Desktop. Enable only on a trusted local machine."
-docker compose -f compose.yaml -f compose.host-tools.yaml up -d --build evo-mcp
+docker compose -f compose.yaml -f compose.host-tools.yaml up -d --build evo-mcp-apps

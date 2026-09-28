@@ -9,6 +9,8 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.observability import metrics
+
 logger = logging.getLogger("evo_mcp.http")
 
 
@@ -19,7 +21,8 @@ class BearerAuthMiddleware:
         self.api_key = api_key
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope.get("path", "").startswith("/mcp") and self.enabled:
+        protected = scope.get("path", "").startswith(("/mcp", "/metrics"))
+        if scope["type"] == "http" and protected and self.enabled:
             auth = Headers(scope=scope).get("authorization", "")
             expected = f"Bearer {self.api_key}"
             if not secrets.compare_digest(auth, expected):
@@ -52,7 +55,9 @@ class RequestLogMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
-            elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+            elapsed_seconds = time.perf_counter() - started
+            elapsed_ms = round(elapsed_seconds * 1000, 2)
+            metrics.observe(str(scope.get("method", "UNKNOWN")), status_code, elapsed_seconds)
             logger.info(
                 "request",
                 extra={

@@ -1,5 +1,7 @@
 # Docker Hub MCP Server
 
+> **Kanoniczne uruchomienie osobiste:** Evo MCP znajduje się w `evo-mcp-node/` i jest zarządzane przez główny `compose.yaml`. Ten sam obraz udostępnia rozdzielone profile `apps` (`http://127.0.0.1:8765/mcp`) i `n8n` (`http://127.0.0.1:8766/mcp`). Historyczny serwer Docker Hub w `src/` pozostaje kodem kompatybilności, ale nie jest domyślnym wdrożeniem Docker Desktop.
+
 > This fork also contains **Fesiomatyzacja Brain Orchestrator**, a separate
 > Noodle Seed MCP entrypoint in [`brain/server.ts`](brain/server.ts). The Brain
 > controls task routing across model roles, Obsidian, NotebookLM, Docker and an

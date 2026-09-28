@@ -1,0 +1,18 @@
+{
+    "name": "Evo managed webhook",
+    "nodes": [
+        {
+            "name": "Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [0, 0],
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "evo-managed",
+                "responseMode": "onReceived"
+            }
+        }
+    ],
+    "connections": {},
+    "settings": { "executionOrder": "v1" }
+}

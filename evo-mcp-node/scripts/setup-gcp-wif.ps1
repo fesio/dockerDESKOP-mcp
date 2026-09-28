@@ -6,6 +6,7 @@ param(
     [string]$PoolId = "github-actions",
     [string]$ProviderId = "github",
     [string]$ServiceAccountName = "evo-mcp-github",
+    [string]$RuntimeServiceAccountName = "evo-mcp-runtime",
     [string]$SecretName = "evo-mcp-api-key"
 )
 
@@ -31,11 +32,17 @@ if ($LASTEXITCODE -ne 0) { throw "Could not enable required Google Cloud APIs." 
 $ProjectNumber = (& gcloud projects describe $ProjectId --format="value(projectNumber)").Trim()
 if (-not $ProjectNumber) { throw "Could not resolve project number." }
 $ServiceAccount = "$ServiceAccountName@$ProjectId.iam.gserviceaccount.com"
-$RuntimeServiceAccount = "$ProjectNumber-compute@developer.gserviceaccount.com"
+$RuntimeServiceAccount = "$RuntimeServiceAccountName@$ProjectId.iam.gserviceaccount.com"
+$CloudBuildServiceAccount = "$ProjectNumber-compute@developer.gserviceaccount.com"
 
 & gcloud iam service-accounts describe $ServiceAccount --project $ProjectId *> $null
 if ($LASTEXITCODE -ne 0) {
     & gcloud iam service-accounts create $ServiceAccountName --project $ProjectId --display-name="Evo MCP GitHub deployer"
+}
+
+& gcloud iam service-accounts describe $RuntimeServiceAccount --project $ProjectId *> $null
+if ($LASTEXITCODE -ne 0) {
+    & gcloud iam service-accounts create $RuntimeServiceAccountName --project $ProjectId --display-name="Evo MCP runtime"
 }
 
 foreach ($Role in @("roles/run.admin", "roles/run.sourceDeveloper", "roles/serviceusage.serviceUsageConsumer")) {
@@ -44,7 +51,8 @@ foreach ($Role in @("roles/run.admin", "roles/run.sourceDeveloper", "roles/servi
 
 # Source deployments use Cloud Build; Google currently uses the Compute Engine default
 # service account unless another build account is explicitly selected.
-& gcloud projects add-iam-policy-binding $ProjectId --member="serviceAccount:$RuntimeServiceAccount" --role="roles/run.builder" --condition=None | Out-Null
+& gcloud projects add-iam-policy-binding $ProjectId --member="serviceAccount:$CloudBuildServiceAccount" --role="roles/run.builder" --condition=None | Out-Null
+& gcloud iam service-accounts add-iam-policy-binding $CloudBuildServiceAccount --project $ProjectId --member="serviceAccount:$ServiceAccount" --role="roles/iam.serviceAccountUser" | Out-Null
 & gcloud iam service-accounts add-iam-policy-binding $RuntimeServiceAccount --project $ProjectId --member="serviceAccount:$ServiceAccount" --role="roles/iam.serviceAccountUser" | Out-Null
 
 & gcloud iam workload-identity-pools describe $PoolId --location=global --project $ProjectId *> $null
@@ -60,9 +68,16 @@ if ($LASTEXITCODE -ne 0) {
         --workload-identity-pool $PoolId `
         --display-name "GitHub $GithubOwner/$GithubRepo" `
         --issuer-uri "https://token.actions.githubusercontent.com" `
-        --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" `
-        --attribute-condition "assertion.repository=='$GithubOwner/$GithubRepo'"
+        --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment" `
+        --attribute-condition "assertion.repository=='$GithubOwner/$GithubRepo' && assertion.environment=='production'"
 }
+
+& gcloud iam workload-identity-pools providers update-oidc $ProviderId `
+    --project $ProjectId `
+    --location global `
+    --workload-identity-pool $PoolId `
+    --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment" `
+    --attribute-condition "assertion.repository=='$GithubOwner/$GithubRepo' && assertion.environment=='production'" | Out-Null
 
 $PrincipalSet = "principalSet://iam.googleapis.com/projects/$ProjectNumber/locations/global/workloadIdentityPools/$PoolId/attribute.repository/$GithubOwner/$GithubRepo"
 & gcloud iam service-accounts add-iam-policy-binding $ServiceAccount --project $ProjectId --member=$PrincipalSet --role="roles/iam.workloadIdentityUser" | Out-Null

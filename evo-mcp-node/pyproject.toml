@@ -1,6 +1,6 @@
 [project]
 name = "evo-mcp-node"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local-first programmer MCP with native n8n workflow automation."
 requires-python = ">=3.12,<3.15"
 dependencies = [

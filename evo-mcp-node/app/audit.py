@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.observability import redact
+
 
 class AuditLogger:
     def __init__(self, path: str) -> None:
@@ -17,7 +19,7 @@ class AuditLogger:
             "ts": datetime.now(UTC).isoformat(),
             "action": action,
             "outcome": outcome,
-            **details,
+            **redact(details),
         }
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)

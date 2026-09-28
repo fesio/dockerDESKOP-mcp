@@ -50,6 +50,7 @@ def _dump(value: Any) -> Any:
 class N8nRestClient:
     settings: Settings
     audit: AuditLogger
+    transport: httpx.AsyncBaseTransport | None = None
 
     def _base(self) -> str:
         if not self.settings.n8n_base_url:
@@ -81,6 +82,7 @@ class N8nRestClient:
                     timeout=self.settings.n8n_timeout_seconds,
                     verify=self.settings.n8n_verify_tls,
                     headers=headers,
+                    transport=self.transport,
                 ) as client:
                     response = await client.request(method, url, params=params, json=json)
             except httpx.HTTPError as exc:
@@ -131,6 +133,11 @@ class N8nRestClient:
         if workflow_id:
             params["workflowId"] = workflow_id
         return await self.request("GET", "/api/v1/executions", params=params)
+
+    async def get_execution(self, execution_id: str, include_data: bool = True) -> Any:
+        return await self.request(
+            "GET", f"/api/v1/executions/{execution_id}", params={"includeData": include_data}
+        )
 
     def webhook_url(self, path: str, test: bool = False) -> str:
         if not path.strip("/"):

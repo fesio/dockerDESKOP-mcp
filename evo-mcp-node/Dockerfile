@@ -13,11 +13,14 @@ RUN apt-get update \
 COPY pyproject.toml ./
 RUN uv sync --no-dev --no-install-project
 COPY app ./app
+COPY scripts/mcp-smoke.py ./scripts/mcp-smoke.py
 
 FROM base AS test
 RUN uv sync --all-groups --no-install-project
 COPY tests ./tests
-RUN uv run ruff check app tests && uv run pytest -q
+RUN chmod -R a-x app tests \
+    && uv run ruff check app tests \
+    && uv run pytest -q
 
 FROM base AS runtime
 RUN groupadd --gid 10001 appgroup \

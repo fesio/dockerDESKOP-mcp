@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
-$portLine = Get-Content .env | Where-Object { $_ -match '^LOCAL_MCP_PORT=' } | Select-Object -First 1
-$port = if ($portLine) { ($portLine -split '=', 2)[1] } else { "8765" }
+$portLine = Get-Content .env | Where-Object { $_ -match '^LOCAL_MCP_N8N_PORT=' } | Select-Object -First 1
+$port = if ($portLine) { ($portLine -split '=', 2)[1] } else { "8766" }
 $ready = Invoke-RestMethod -Uri "http://127.0.0.1:$port/ready" -TimeoutSec 5
 $ready | ConvertTo-Json -Depth 5
 try {
